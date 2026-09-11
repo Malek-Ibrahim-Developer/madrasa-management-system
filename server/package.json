@@ -1,0 +1,30 @@
+{
+  "name": "altus-kairos-server",
+  "version": "1.0.0",
+  "description": "Altus Kairos — Madrasa Management System API",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "db:push": "npx prisma db push",
+    "db:seed": "node src/seed.js",
+    "db:studio": "npx prisma studio"
+  },
+  "keywords": [],
+  "author": "Ibrahim Malek",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.6",
+    "csv-parse": "^7.0.1",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "multer": "^2.2.0",
+    "pdfkit": "^0.19.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "prisma": "^5.22.0"
+  }
+}
