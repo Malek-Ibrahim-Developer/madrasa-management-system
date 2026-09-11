@@ -7,15 +7,17 @@ import {
   MdLogout,
   MdMenu,
 } from 'react-icons/md';
+import DevRoleSwitcher from './DevRoleSwitcher';
+import { useDevRole } from '../../context/DevRoleContext';
 
-// Temporary mock user — auth will be implemented later
+// Temporary mock user profile — auth will be implemented later
 const mockUser = {
   name: 'Ibrahim Malek',
-  role: 'admin',
   email: 'admin@altuskairos.com',
 };
 
 export default function TopBar({ sidebarCollapsed, pageTitle, onMobileMenuToggle }) {
+  const { currentRole } = useDevRole();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -75,6 +77,9 @@ export default function TopBar({ sidebarCollapsed, pageTitle, onMobileMenuToggle
           <span className="notification-badge" />
         </button>
 
+        {/* Development Role Switcher */}
+        <DevRoleSwitcher />
+
         {/* User Profile */}
         <div
           className="topbar-user"
@@ -87,7 +92,7 @@ export default function TopBar({ sidebarCollapsed, pageTitle, onMobileMenuToggle
               {mockUser.name}
             </div>
             <div className="topbar-user-role">
-              {mockUser.role}
+              {currentRole.toLowerCase()}
             </div>
           </div>
 

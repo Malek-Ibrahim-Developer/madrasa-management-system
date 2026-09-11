@@ -19,50 +19,132 @@ import {
   MdClose,
   MdTune,
 } from 'react-icons/md';
+import { useDevRole } from '../../context/DevRoleContext';
+import { useInstitution } from '../../context/InstitutionContext';
+import { PERMISSIONS } from '../../config/permissions';
 
 const NAV_SECTIONS = [
   {
     title: 'Overview',
     items: [
-      { icon: MdDashboard, label: 'Dashboard', path: '/' },
+      {
+        icon: MdDashboard,
+        label: 'Dashboard',
+        path: '/',
+        permission: PERMISSIONS.DASHBOARD_VIEW,
+      },
     ],
   },
   {
     title: 'Academics',
     items: [
-      { icon: MdPeople, label: 'Students', path: '/students', end: true },
-      { icon: MdTune, label: 'Student Fields', path: '/students/custom-fields' },
-      { icon: MdMenuBook, label: 'Courses', path: '/courses' },
-      { icon: MdFactCheck, label: 'Attendance', path: '/attendance' },
-      { icon: MdAssignment, label: 'Exams', path: '/exams' },
+      {
+        icon: MdPeople,
+        label: 'Students',
+        path: '/students',
+        end: true,
+        permission: PERMISSIONS.STUDENTS_VIEW,
+        module: 'studentsEnabled',
+      },
+      {
+        icon: MdTune,
+        label: 'Student Fields',
+        path: '/students/custom-fields',
+        permission: PERMISSIONS.STUDENTS_EDIT,
+        module: 'studentsEnabled',
+      },
+      {
+        icon: MdMenuBook,
+        label: 'Courses',
+        path: '/courses',
+        permission: PERMISSIONS.COURSES_VIEW,
+        module: 'coursesEnabled',
+      },
+      {
+        icon: MdFactCheck,
+        label: 'Attendance',
+        path: '/attendance',
+        permission: PERMISSIONS.ATTENDANCE_VIEW,
+        module: 'attendanceEnabled',
+      },
+      {
+        icon: MdAssignment,
+        label: 'Exams',
+        path: '/exams',
+        permission: PERMISSIONS.EXAMS_VIEW,
+        module: 'examsEnabled',
+      },
     ],
   },
   {
     title: 'Finance',
     items: [
-      { icon: MdAccountBalance, label: 'Accounts', path: '/accounts' },
-      { icon: MdReceipt, label: 'Fees', path: '/fees' },
-      { icon: MdPayments, label: 'Salary', path: '/salary' },
+      {
+        icon: MdAccountBalance,
+        label: 'Accounts',
+        path: '/accounts',
+        permission: PERMISSIONS.ACCOUNTS_VIEW,
+        module: 'accountsEnabled',
+      },
+      {
+        icon: MdReceipt,
+        label: 'Fees',
+        path: '/fees',
+        permission: PERMISSIONS.FEES_VIEW,
+        module: 'feesEnabled',
+      },
+      {
+        icon: MdPayments,
+        label: 'Salary',
+        path: '/salary',
+        permission: PERMISSIONS.SALARY_VIEW,
+        module: 'salaryEnabled',
+      },
     ],
   },
   {
     title: 'Resources',
     items: [
-      { icon: MdLocalLibrary, label: 'Library', path: '/library' },
-      { icon: MdRestaurant, label: 'Kitchen', path: '/kitchen' },
-      { icon: MdApartment, label: 'Hostel', path: '/hostel' },
+      {
+        icon: MdLocalLibrary,
+        label: 'Library',
+        path: '/library',
+        permission: PERMISSIONS.LIBRARY_VIEW,
+        module: 'libraryEnabled',
+      },
+      {
+        icon: MdRestaurant,
+        label: 'Kitchen',
+        path: '/kitchen',
+        permission: PERMISSIONS.KITCHEN_VIEW,
+        module: 'kitchenEnabled',
+      },
+      {
+        icon: MdApartment,
+        label: 'Hostel',
+        path: '/hostel',
+        permission: PERMISSIONS.HOSTEL_VIEW,
+        module: 'hostelEnabled',
+      },
     ],
   },
   {
     title: 'System',
     items: [
-      { icon: MdSettings, label: 'Settings', path: '/settings' },
+      {
+        icon: MdSettings,
+        label: 'Settings',
+        path: '/settings',
+        permission: PERMISSIONS.SETTINGS_VIEW,
+      },
     ],
   },
 ];
 
 export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
   const location = useLocation();
+  const { hasPermission } = useDevRole();
+  const { configuration } = useInstitution();
 
   // Auto-close sidebar on mobile when route changes
   useEffect(() => {
@@ -70,6 +152,26 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
       onMobileClose();
     }
   }, [location.pathname]);
+
+  // Dynamic permission and module filtering
+  const visibleSections = NAV_SECTIONS
+    .map((section) => {
+      const visibleItems = section.items.filter((item) => {
+        const permissionAllowed =
+          !item.permission || hasPermission(item.permission);
+
+        const moduleAllowed =
+          !item.module || configuration?.[item.module] !== false;
+
+        return permissionAllowed && moduleAllowed;
+      });
+
+      return {
+        ...section,
+        items: visibleItems,
+      };
+    })
+    .filter((section) => section.items.length > 0);
 
   const classes = [
     'sidebar',
@@ -104,7 +206,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
 
       {/* ── Navigation ── */}
       <nav className="sidebar-nav">
-        {NAV_SECTIONS.map((section) => (
+        {visibleSections.map((section) => (
           <div className="nav-section" key={section.title}>
             <div className="nav-section-title">{section.title}</div>
 

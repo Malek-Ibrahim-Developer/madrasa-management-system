@@ -257,6 +257,30 @@ export async function executeImport(validatedData) {
   });
 }
 
+// ── Institution & Configuration API (Phase 1) ──
+
+export async function getInstitutionProfile() {
+  return apiCall('/institution/profile');
+}
+
+export async function updateInstitutionProfile(profileData) {
+  return apiCall('/institution/profile', {
+    method: 'PUT',
+    body: JSON.stringify(profileData),
+  });
+}
+
+export async function getInstitutionConfiguration() {
+  return apiCall('/institution/configuration');
+}
+
+export async function updateInstitutionConfiguration(configData) {
+  return apiCall('/institution/configuration', {
+    method: 'PUT',
+    body: JSON.stringify(configData),
+  });
+}
+
 // ── Health Check ──
 
 export async function healthCheck() {

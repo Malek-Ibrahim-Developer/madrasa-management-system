@@ -43,32 +43,33 @@ model InstitutionConfiguration {
   id            String @id @default(cuid())
   institutionId String @unique
 
-  // Feature switches
-  studentsEnabled  Boolean @default(true)
-  coursesEnabled   Boolean @default(true)
-  attendanceEnabled Boolean @default(true)
-  examsEnabled     Boolean @default(false)
-  feesEnabled      Boolean @default(false)
-  accountsEnabled  Boolean @default(false)
-  salaryEnabled    Boolean @default(false)
-  libraryEnabled   Boolean @default(false)
-  hostelEnabled    Boolean @default(false)
-  kitchenEnabled   Boolean @default(false)
-  resultsEnabled   Boolean @default(false)
+  // Module availability
+  studentsEnabled       Boolean  @default(true)
+  coursesEnabled        Boolean  @default(true)
+  attendanceEnabled     Boolean  @default(true)
+  examsEnabled          Boolean  @default(true)
+  feesEnabled           Boolean  @default(false)
+  accountsEnabled       Boolean  @default(false)
+  salaryEnabled         Boolean  @default(false)
+  libraryEnabled        Boolean  @default(false)
+  hostelEnabled         Boolean  @default(false)
+  kitchenEnabled        Boolean  @default(false)
+  resultsEnabled        Boolean  @default(false)
 
-  // Academic behavior
-  requireAcademicYear  Boolean @default(true)
-  allowMultipleSections Boolean @default(true)
+  // Academic rules
+  requireAcademicYear   Boolean  @default(true)
+  allowMultipleSections Boolean  @default(true)
 
-  // Attendance behavior
-  allowAttendanceEdit Boolean @default(true)
-  attendanceLockDays  Int     @default(7)
+  // Attendance rules
+  allowAttendanceEdit   Boolean  @default(true)
+  attendanceLockDays    Int      @default(7)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
+  @@index([institutionId])
   @@map("institution_configurations")
 }
 

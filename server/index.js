@@ -18,6 +18,8 @@ const exportRoutes = require('./src/routes/exportRoutes');
 const importRoutes = require('./src/routes/importRoutes');
 const attendanceRoutes = require('./src/routes/attendanceRoutes');
 const authRoutes = require('./src/routes/authRoutes');
+const institutionRoutes = require('./src/routes/institutionRoutes');
+const devContext = require('./src/middleware/devContext');
 
 // ── Initialize ──
 const app = express();
@@ -37,7 +39,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Dev Context Middleware ──
+app.use(devContext);
+
 // ── API Routes ──
+app.use('/api/institution', institutionRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
 app.use('/api/classes', classRoutes);
