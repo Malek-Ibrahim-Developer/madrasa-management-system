@@ -44,12 +44,20 @@ model InstitutionConfiguration {
   institutionId String @unique
 
   // Feature switches
+  studentsEnabled  Boolean @default(true)
+  coursesEnabled   Boolean @default(true)
   attendanceEnabled Boolean @default(true)
-  feesEnabled       Boolean @default(false)
-  resultsEnabled    Boolean @default(false)
+  examsEnabled     Boolean @default(false)
+  feesEnabled      Boolean @default(false)
+  accountsEnabled  Boolean @default(false)
+  salaryEnabled    Boolean @default(false)
+  libraryEnabled   Boolean @default(false)
+  hostelEnabled    Boolean @default(false)
+  kitchenEnabled   Boolean @default(false)
+  resultsEnabled   Boolean @default(false)
 
   // Academic behavior
-  requireAcademicYear Boolean @default(true)
+  requireAcademicYear  Boolean @default(true)
   allowMultipleSections Boolean @default(true)
 
   // Attendance behavior
@@ -116,10 +124,10 @@ model Teacher {
 /// A class/course in the madrasa (e.g. Class 8, Hifz Year 2)
 model Class {
   id             String      @id @default(cuid())
-  name           String                  // e.g. "Class 8", "Hifz Year 1"
-  section        String?                 // e.g. "A", "B"
-  code           String      @unique     // e.g. "CLS-08A"
-  teacher        String?                 // legacy teacher name string (for backwards compatibility)
+  name           String
+  section        String?
+  code           String      @unique
+  teacher        String?
   capacity       Int         @default(40)
   status         ClassStatus @default(ACTIVE)
 
@@ -130,7 +138,6 @@ model Class {
   updatedAt      DateTime    @updatedAt
   archivedAt     DateTime?
 
-  // Relations
   students    Student[]
   exams       Exam[]
   attendances Attendance[]
@@ -149,7 +156,7 @@ model ClassTeacher {
   id        String    @id @default(cuid())
   classId   String
   teacherId String
-  role      String?   // "Main Teacher", "Assistant", "Quran Teacher"
+  role      String?
   startDate DateTime?
   endDate   DateTime?
 
@@ -201,7 +208,6 @@ model ClassSubject {
   @@map("class_subjects")
 }
 
-/// Student enrollment record
 enum EnrollmentStatus {
   ACTIVE
   TRANSFERRED
@@ -238,7 +244,6 @@ model Enrollment {
 // Security, Users & RBAC Models
 // ──────────────────────────────────────
 
-/// System user
 model User {
   id            String   @id @default(cuid())
   institutionId String?
@@ -262,15 +267,14 @@ model User {
   @@map("users")
 }
 
-/// Server-side session with One-Device / One-Session tracking
 model Session {
   id         String    @id @default(cuid())
   userId     String
   deviceId   String
-  tokenHash  String    @unique
+  tokenHash  String   @unique
 
-  createdAt  DateTime  @default(now())
-  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
   expiresAt  DateTime
   revokedAt  DateTime?
 
@@ -281,7 +285,6 @@ model Session {
   @@map("sessions")
 }
 
-/// RBAC Role
 model Role {
   id            String  @id @default(cuid())
   institutionId String?
@@ -296,7 +299,6 @@ model Role {
   @@map("roles")
 }
 
-/// Granular RBAC Permission
 model Permission {
   id          String @id @default(cuid())
   code        String @unique
@@ -307,7 +309,6 @@ model Permission {
   @@map("permissions")
 }
 
-/// Pivot between Role and Permission
 model RolePermission {
   roleId       String
   permissionId String
@@ -319,7 +320,6 @@ model RolePermission {
   @@map("role_permissions")
 }
 
-/// Audit log for system compliance and mutation tracking
 model AuditLog {
   id            String   @id @default(cuid())
   institutionId String?
@@ -335,7 +335,7 @@ model AuditLog {
   ipAddress     String?
   userAgent     String?
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -346,10 +346,9 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-/// A student enrolled in the madrasa
 model Student {
   id            String   @id @default(cuid())
-  admissionNo   String   @unique    // e.g. "AK-2024-001"
+  admissionNo   String   @unique
   firstName     String
   lastName      String
   fatherName    String?
@@ -362,29 +361,25 @@ model Student {
   admissionDate DateTime @default(now())
   status        StudentStatus @default(ACTIVE)
 
-  // Guardian info
   guardianName     String?
   guardianPhone    String?
   guardianEmail    String?
-  guardianRelation String?  // "Father", "Uncle", "Brother", etc.
+  guardianRelation String?
 
-  // Additional info
   bloodGroup       String?
   nationality      String?  @default("Indian")
-  idNumber         String?  // Aadhaar or any govt ID
+  idNumber         String?
   previousSchool   String?
   emergencyContact String?
   medicalNotes     String?
   photoUrl         String?
 
-  // Foreign keys
   classId       String?
   class         Class?   @relation(fields: [classId], references: [id])
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  // Relations
   attendances      Attendance[]
   results          Result[]
   customFieldValues CustomFieldValue[]
@@ -393,14 +388,12 @@ model Student {
   @@map("students")
 }
 
-/// Daily attendance record
 model Attendance {
   id        String           @id @default(cuid())
   date      DateTime
   status    AttendanceStatus @default(PRESENT)
   remarks   String?
 
-  // Foreign keys
   studentId    String
   student      Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
   classId      String
@@ -410,41 +403,36 @@ model Attendance {
 
   createdAt DateTime @default(now())
 
-  @@unique([studentId, date])  // One record per student per day
+  @@unique([studentId, date])
   @@index([enrollmentId, date])
   @@index([classId, date])
   @@map("attendances")
 }
 
-/// An examination
 model Exam {
   id        String   @id @default(cuid())
-  title     String           // e.g. "Mid-Term 2024"
-  subject   String?          // e.g. "Mathematics"
+  title     String
+  subject   String?
   date      DateTime
   totalMarks Int     @default(100)
 
-  // Foreign keys
   classId   String
   class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   results   Result[]
 
   @@map("exams")
 }
 
-/// Exam result for a student
 model Result {
   id           String @id @default(cuid())
   marksObtained Float
   grade         String?
   remarks       String?
 
-  // Foreign keys
   examId    String
   exam      Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
   studentId String
@@ -452,26 +440,21 @@ model Result {
 
   createdAt DateTime @default(now())
 
-  @@unique([examId, studentId])  // One result per student per exam
+  @@unique([examId, studentId])
   @@map("results")
 }
 
-// ──────────────────────────────────────
-// Dynamic Custom Fields
-// ──────────────────────────────────────
-
-/// Admin-defined custom field definition
 model CustomField {
   id          String    @id @default(cuid())
-  name        String             // "Blood Group", "Aadhaar Number"
-  fieldKey    String    @unique   // "blood_group", "aadhaar_number" (auto-slug)
-  fieldType   FieldType           // TEXT, NUMBER, DATE, SELECT, CHECKBOX, TEXTAREA
-  options     String?             // JSON array for SELECT: '["A+","A-","B+","O+"]'
-  placeholder String?             // Placeholder text
+  name        String
+  fieldKey    String    @unique
+  fieldType   FieldType
+  options     String?
+  placeholder String?
   isRequired  Boolean   @default(false)
   isActive    Boolean   @default(true)
-  sortOrder   Int       @default(0)  // Display order
-  section     String    @default("custom") // "personal", "contact", "academic", "custom"
+  sortOrder   Int       @default(0)
+  section     String    @default("custom")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -480,23 +463,18 @@ model CustomField {
   @@map("custom_fields")
 }
 
-/// Stores the actual value of a custom field for a specific student
 model CustomFieldValue {
   id            String @id @default(cuid())
-  value         String           // Stored as string, interpreted by fieldType
+  value         String
 
   customFieldId String
   customField   CustomField @relation(fields: [customFieldId], references: [id], onDelete: Cascade)
   studentId     String
   student       Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@unique([customFieldId, studentId])  // One value per field per student
+  @@unique([customFieldId, studentId])
   @@map("custom_field_values")
 }
-
-// ──────────────────────────────────────
-// Enums
-// ──────────────────────────────────────
 
 enum Gender {
   MALE
