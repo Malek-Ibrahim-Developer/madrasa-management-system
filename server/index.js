@@ -17,6 +17,7 @@ const customFieldRoutes = require('./src/routes/customFieldRoutes');
 const exportRoutes = require('./src/routes/exportRoutes');
 const importRoutes = require('./src/routes/importRoutes');
 const attendanceRoutes = require('./src/routes/attendanceRoutes');
+const authRoutes = require('./src/routes/authRoutes');
 
 // ── Initialize ──
 const app = express();
@@ -37,6 +38,7 @@ app.use((req, res, next) => {
 });
 
 // ── API Routes ──
+app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
 app.use('/api/classes', classRoutes);
 app.use('/api/custom-fields', customFieldRoutes);

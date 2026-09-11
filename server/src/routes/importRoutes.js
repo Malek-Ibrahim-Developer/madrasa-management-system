@@ -44,7 +44,8 @@ router.get('/template', async (req, res) => {
     let customFields = [];
     if (req.prisma.customField) {
       customFields = await req.prisma.customField.findMany({
-        where: { isActive: true, entityType: 'STUDENT' }
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' }
       });
       
       customFields.forEach(cf => {
@@ -136,8 +137,8 @@ router.post('/students/validate', upload.single('file'), async (req, res) => {
     const students = await req.prisma.student.findMany({ select: { admissionNo: true } });
     students.forEach(s => dbAdmissionNos.add(s.admissionNo));
     
-    const classes = await req.prisma.class.findMany({ select: { id: true, classCode: true } });
-    const classCodeMap = new Map(classes.map(c => [c.classCode, c.id]));
+    const classes = await req.prisma.class.findMany({ select: { id: true, code: true } });
+    const classCodeMap = new Map(classes.map(c => [c.code, c.id]));
     
     for (const r of rows) {
       const issues = [];
@@ -214,8 +215,8 @@ router.post('/students/execute', async (req, res) => {
     let skipped = 0;
     const executionErrors = [];
     
-    const classes = await req.prisma.class.findMany({ select: { id: true, classCode: true } });
-    const classCodeMap = new Map(classes.map(c => [c.classCode, c.id]));
+    const classes = await req.prisma.class.findMany({ select: { id: true, code: true } });
+    const classCodeMap = new Map(classes.map(c => [c.code, c.id]));
 
     // Check if any row has a mapped class
     const hasMappedClasses = rows.some(r => {

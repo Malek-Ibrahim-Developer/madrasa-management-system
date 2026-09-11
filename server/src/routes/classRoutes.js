@@ -194,18 +194,20 @@ router.post('/', async (req, res, next) => {
     // Transactional atomic creation
     const newClass = await req.prisma.$transaction(async (tx) => {
       if (!academicYearId) {
-        let activeYear = await tx.academicYear.findFirst({ where: { isCurrent: true } });
+        const activeYear = await tx.academicYear.findFirst({ where: { isCurrent: true } });
         if (!activeYear) {
-          activeYear = await tx.academicYear.create({
-            data: {
-              name: '2025-2026',
-              startDate: new Date('2025-06-01T00:00:00.000Z'),
-              endDate: new Date('2026-05-31T23:59:59.999Z'),
-              isCurrent: true,
-            },
-          });
+          throw new AppError(
+            'An active academic year must be configured before creating a class.',
+            409,
+            'ACTIVE_ACADEMIC_YEAR_REQUIRED'
+          );
         }
         academicYearId = activeYear.id;
+      } else {
+        const specifiedYear = await tx.academicYear.findUnique({ where: { id: academicYearId } });
+        if (!specifiedYear) {
+          throw new AppError('Specified academic year not found', 404, 'ACADEMIC_YEAR_NOT_FOUND');
+        }
       }
 
       const existing = await tx.class.findUnique({ where: { code } });

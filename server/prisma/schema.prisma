@@ -11,6 +11,60 @@ datasource db {
 }
 
 // ──────────────────────────────────────
+// Institution & Configuration Foundation
+// ──────────────────────────────────────
+
+/// Institution / Madrasa profile
+model Institution {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  description String?
+  phone       String?
+  email       String?
+  address     String?
+  logoUrl     String?
+  status      String   @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  configuration InstitutionConfiguration?
+  academicYears  AcademicYear[]
+  users          User[]
+  roles          Role[]
+  auditLogs      AuditLog[]
+
+  @@map("institutions")
+}
+
+/// Institution-level configuration switches and behavior rules
+model InstitutionConfiguration {
+  id            String @id @default(cuid())
+  institutionId String @unique
+
+  // Feature switches
+  attendanceEnabled Boolean @default(true)
+  feesEnabled       Boolean @default(false)
+  resultsEnabled    Boolean @default(false)
+
+  // Academic behavior
+  requireAcademicYear Boolean @default(true)
+  allowMultipleSections Boolean @default(true)
+
+  // Attendance behavior
+  allowAttendanceEdit Boolean @default(true)
+  attendanceLockDays  Int     @default(7)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@map("institution_configurations")
+}
+
+// ──────────────────────────────────────
 // Academic Models
 // ──────────────────────────────────────
 
@@ -23,12 +77,15 @@ enum ClassStatus {
 
 /// Academic Year session (e.g. 2025-2026)
 model AcademicYear {
-  id        String   @id @default(cuid())
-  name      String   @unique // e.g. "2025-2026"
-  startDate DateTime
-  endDate   DateTime
-  isCurrent Boolean  @default(false)
+  id            String   @id @default(cuid())
+  institutionId String?
+  name          String   @unique // e.g. "2025-2026"
+  startDate     DateTime
+  endDate       DateTime
+  isCurrent     Boolean  @default(false)
+  status        String   @default("ACTIVE")
 
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   classes     Class[]
   enrollments Enrollment[]
 
@@ -36,6 +93,7 @@ model AcademicYear {
   updatedAt DateTime @updatedAt
 
   @@index([isCurrent])
+  @@index([institutionId, status])
   @@map("academic_years")
 }
 
@@ -164,6 +222,7 @@ model Enrollment {
   student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
   class        Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  attendances  Attendance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -175,20 +234,115 @@ model Enrollment {
   @@map("enrollments")
 }
 
-/// Audit log for system compliance
-model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  action    String
-  entity    String
-  entityId  String
-  oldValue  Json?
-  newValue  Json?
-  createdAt DateTime @default(now())
+// ──────────────────────────────────────
+// Security, Users & RBAC Models
+// ──────────────────────────────────────
 
-  @@index([entity, entityId])
+/// System user
+model User {
+  id            String   @id @default(cuid())
+  institutionId String?
+  name          String
+  email         String   @unique
+  passwordHash  String
+  phone         String?
+  roleId        String?
+  isActive      Boolean  @default(true)
+
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  role        Role?        @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  sessions    Session[]
+  auditLogs   AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([institutionId])
+  @@map("users")
+}
+
+/// Server-side session with One-Device / One-Session tracking
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  deviceId   String
+  tokenHash  String    @unique
+
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
-  @@index([createdAt])
+  @@index([deviceId])
+  @@map("sessions")
+}
+
+/// RBAC Role
+model Role {
+  id            String  @id @default(cuid())
+  institutionId String?
+  name          String
+  description   String?
+
+  institution Institution?     @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  users       User[]
+  permissions RolePermission[]
+
+  @@unique([institutionId, name])
+  @@map("roles")
+}
+
+/// Granular RBAC Permission
+model Permission {
+  id          String @id @default(cuid())
+  code        String @unique
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+/// Pivot between Role and Permission
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+/// Audit log for system compliance and mutation tracking
+model AuditLog {
+  id            String   @id @default(cuid())
+  institutionId String?
+  userId        String?
+
+  action        String
+  entityType    String
+  entityId      String?
+
+  beforeData    Json?
+  afterData     Json?
+
+  ipAddress     String?
+  userAgent     String?
+
+  createdAt     DateTime @default(now())
+
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([institutionId, createdAt])
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
   @@map("audit_logs")
 }
 
@@ -247,14 +401,18 @@ model Attendance {
   remarks   String?
 
   // Foreign keys
-  studentId String
-  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  classId   String
-  class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classId      String
+  class        Class       @relation(fields: [classId], references: [id], onDelete: Cascade)
+  enrollmentId String?
+  enrollment   Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
 
   @@unique([studentId, date])  // One record per student per day
+  @@index([enrollmentId, date])
+  @@index([classId, date])
   @@map("attendances")
 }
 

@@ -68,8 +68,8 @@ router.get('/students/excel', async (req, res) => {
 
     // Fetch active custom fields
     const customFields = await req.prisma.customField.findMany({
-      where: { entityType: 'STUDENT', isActive: true },
-      orderBy: { displayOrder: 'asc' },
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
     });
 
     // Fetch students with active enrollment data
@@ -125,7 +125,7 @@ router.get('/students/excel', async (req, res) => {
     // Add custom field columns
     customFields.forEach(cf => {
       columns.push({
-        header: cf.fieldLabel,
+        header: cf.name,
         key: `cf_${cf.fieldKey}`,
         width: 20
       });
