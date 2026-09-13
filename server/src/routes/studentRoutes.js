@@ -1,6 +1,7 @@
 /**
  * Student Routes — Enhanced CRUD API with custom fields, advanced filters, sorting,
- * Authoritative Enrollment Architecture (Stage 1), and Server-Side Pagination.
+ * Authoritative Enrollment Architecture, and Server-Side Pagination.
+ * Altus Kairos — Tenant & Relationship Integrity Hardening
  */
 
 const express = require('express');
@@ -10,37 +11,41 @@ const AppError = require('../utils/AppError');
 const requirePermission = require('../middleware/requirePermission');
 const { requireInstitutionContext } = require('../middleware/institutionContext');
 const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+const { getCurrentAcademicYear } = require('../services/academicYearService');
 
 // All student routes require institution context and students module
 router.use(requireInstitutionContext);
 router.use(requireModuleEnabled('studentsEnabled'));
 
 /**
- * Helper to resolve active academic year without silent fallbacks
+ * Helper to resolve active academic year for the institution
  */
-async function resolveActiveAcademicYear(tx) {
-  const activeYear = await tx.academicYear.findFirst({ where: { isCurrent: true } });
-  if (!activeYear) {
-    throw new AppError(
-      'No active academic year found. An academic year marked isCurrent: true is required for class operations.',
-      400,
-      'NO_ACTIVE_ACADEMIC_YEAR'
-    );
-  }
-  return activeYear;
+async function resolveActiveAcademicYear(tx, institutionId) {
+  return await getCurrentAcademicYear(tx, institutionId);
 }
 
 /**
- * Helper to validate & row-lock target class for capacity concurrency safety
+ * Helper to validate & row-lock target class strictly scoped to institution
  */
-async function validateAndLockTargetClass(tx, targetClassId, activeAcademicYearId) {
+async function validateAndLockTargetClass(tx, targetClassId, activeAcademicYearId, institutionId) {
   const targetClasses = await tx.$queryRaw`
-    SELECT id, status, "academicYearId", capacity FROM "classes" WHERE id = ${targetClassId} FOR UPDATE
+    SELECT
+      c.id,
+      c.status,
+      c."academicYearId",
+      c.capacity,
+      ay."institutionId"
+    FROM "classes" c
+    JOIN "academic_years" ay ON ay.id = c."academicYearId"
+    WHERE c.id = ${targetClassId}
+    FOR UPDATE OF c
   `;
+
   const targetClass = targetClasses[0];
-  if (!targetClass) {
+  if (!targetClass || targetClass.institutionId !== institutionId) {
     throw new AppError('Target class not found', 404, 'CLASS_NOT_FOUND');
   }
+
   if (targetClass.status !== 'ACTIVE' || targetClass.academicYearId !== activeAcademicYearId) {
     throw new AppError(
       'Target class is invalid, inactive, or belongs to a different academic year',
@@ -61,13 +66,31 @@ async function validateAndLockTargetClass(tx, targetClassId, activeAcademicYearI
 /**
  * Helper to fetch a student with deterministic active enrollment mapping & corruption detection
  */
-async function getDeterministicStudent(prisma, studentId) {
-  const activeAcademicYear = await prisma.academicYear.findFirst({ where: { isCurrent: true } });
+async function getDeterministicStudent(prisma, studentId, institutionId) {
+  let activeAcademicYear = null;
+  try {
+    activeAcademicYear = await getCurrentAcademicYear(prisma, institutionId);
+  } catch (err) {
+    // If no active year is configured, still allow reading student metadata
+    activeAcademicYear = null;
+  }
 
-  const rawStudent = await prisma.student.findUnique({
-    where: { id: studentId },
+  const rawStudent = await prisma.student.findFirst({
+    where: {
+      id: studentId,
+      institutionId,
+    },
     include: {
-      customFieldValues: { include: { customField: { select: { id: true, fieldKey: true, name: true, fieldType: true, section: true } } } },
+      customFieldValues: {
+        where: {
+          customField: { institutionId },
+        },
+        include: {
+          customField: {
+            select: { id: true, fieldKey: true, name: true, fieldType: true, section: true },
+          },
+        },
+      },
     },
   });
 
@@ -99,14 +122,14 @@ async function getDeterministicStudent(prisma, studentId) {
 
   return {
     ...rawStudent,
-    classId: activeEnrollment?.classId ?? null, // Authoritative derived active classId
-    class: currentClass,                        // Authoritative derived active class
+    classId: activeEnrollment?.classId ?? null,
+    class: currentClass,
   };
 }
 
 /**
  * GET /api/students
- * Fetch students with search, advanced filters, sorting, pagination using Authoritative Enrollment
+ * Fetch students with search, advanced filters, sorting, pagination strictly scoped to current institution
  */
 router.get('/', requirePermission('students.view'), async (req, res, next) => {
   try {
@@ -126,11 +149,15 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
     let total = 0;
 
     if (sortBy === 'class') {
-      // FIX A: Sort by current active Enrollment's Class name for the current academic year
       const direction = normalizedSortOrder === 'asc' ? 'ASC' : 'DESC';
       const conditions = [];
       const queryParams = [];
       let paramIdx = 1;
+
+      // Strict institution isolation in raw query
+      conditions.push(`s."institutionId" = $${paramIdx}`);
+      queryParams.push(req.institutionId);
+      paramIdx++;
 
       if (search) {
         conditions.push(`(
@@ -153,6 +180,7 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
             AND e_filt."classId" = $${paramIdx}
             AND e_filt."status" = 'ACTIVE'
             AND ay_filt."isCurrent" = true
+            AND ay_filt."institutionId" = $1
         )`);
         queryParams.push(classId);
         paramIdx++;
@@ -190,7 +218,7 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
         paramIdx++;
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
       const countSql = `
         SELECT COUNT(*)::int AS total
@@ -202,7 +230,7 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
         SELECT s.id
         FROM "students" s
         LEFT JOIN "enrollments" e ON e."studentId" = s.id AND e."status" = 'ACTIVE'
-        LEFT JOIN "academic_years" ay ON ay.id = e."academicYearId" AND ay."isCurrent" = true
+        LEFT JOIN "academic_years" ay ON ay.id = e."academicYearId" AND ay."isCurrent" = true AND ay."institutionId" = $1
         LEFT JOIN "classes" c ON c.id = e."classId"
         ${whereClause}
         ORDER BY c.name ${direction} NULLS LAST, s.id ASC
@@ -220,12 +248,15 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
 
       if (orderedIds.length > 0) {
         const rawStudents = await req.prisma.student.findMany({
-          where: { id: { in: orderedIds } },
+          where: {
+            id: { in: orderedIds },
+            institutionId: req.institutionId,
+          },
           include: {
             enrollments: {
               where: {
                 status: 'ACTIVE',
-                academicYear: { isCurrent: true },
+                academicYear: { isCurrent: true, institutionId: req.institutionId },
               },
               include: { class: { select: { id: true, name: true, code: true } } },
               take: 2,
@@ -237,8 +268,10 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
         students = orderedIds.map((id) => idMap.get(id)).filter(Boolean);
       }
     } else {
-      // Standard Prisma query for other sort fields
-      const where = {};
+      // Standard Prisma query strictly scoped to current institution
+      const where = {
+        institutionId: req.institutionId,
+      };
 
       if (search) {
         where.OR = [
@@ -256,7 +289,7 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
           some: {
             classId,
             status: 'ACTIVE',
-            academicYear: { isCurrent: true },
+            academicYear: { isCurrent: true, institutionId: req.institutionId },
           },
         };
       }
@@ -308,10 +341,10 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
             enrollments: {
               where: {
                 status: 'ACTIVE',
-                academicYear: { isCurrent: true },
+                academicYear: { isCurrent: true, institutionId: req.institutionId },
               },
               include: { class: { select: { id: true, name: true, code: true } } },
-              take: 2, // Take up to 2 active enrollments to detect integrity conflicts
+              take: 2,
             },
           },
           orderBy,
@@ -362,11 +395,11 @@ router.get('/', requirePermission('students.view'), async (req, res, next) => {
 
 /**
  * GET /api/students/:id
- * Fetch single student with deterministic active enrollment mapping + custom fields
+ * Fetch single student ensuring institution ownership
  */
 router.get('/:id', requirePermission('students.view'), async (req, res, next) => {
   try {
-    const student = await getDeterministicStudent(req.prisma, req.params.id);
+    const student = await getDeterministicStudent(req.prisma, req.params.id, req.institutionId);
 
     if (!student) {
       throw new AppError('Student not found', 404, 'STUDENT_NOT_FOUND');
@@ -380,7 +413,7 @@ router.get('/:id', requirePermission('students.view'), async (req, res, next) =>
 
 /**
  * POST /api/students
- * Transactional creation + capacity validation + active enrollment creation
+ * Transactional creation + capacity validation + active enrollment creation with tenant scoping
  */
 router.post('/', requirePermission('students.create'), async (req, res, next) => {
   try {
@@ -398,48 +431,57 @@ router.post('/', requirePermission('students.create'), async (req, res, next) =>
       throw new AppError('Admission number, first name, and last name are required', 400, 'VALIDATION_ERROR');
     }
 
-    // Check duplicate admissionNo
-    const existing = await req.prisma.student.findUnique({ where: { admissionNo } });
+    const trimmedAdmissionNo = admissionNo.trim();
+
+    // Check duplicate admissionNo within this institution
+    const existing = await req.prisma.student.findUnique({
+      where: {
+        institutionId_admissionNo: {
+          institutionId: req.institutionId,
+          admissionNo: trimmedAdmissionNo,
+        },
+      },
+    });
     if (existing) {
-      throw new AppError(`Student with admission number "${admissionNo}" already exists`, 409, 'DUPLICATE_ADMISSION_NO');
+      throw new AppError(`Student with admission number "${trimmedAdmissionNo}" already exists`, 409, 'DUPLICATE_ADMISSION_NO');
     }
 
     // Transactional atomic execution
     const newStudent = await req.prisma.$transaction(async (tx) => {
       let activeAcademicYear = null;
 
-      // If classId is provided, require active AcademicYear and validate capacity
       if (classId) {
-        activeAcademicYear = await resolveActiveAcademicYear(tx);
-        await validateAndLockTargetClass(tx, classId, activeAcademicYear.id);
+        activeAcademicYear = await resolveActiveAcademicYear(tx, req.institutionId);
+        await validateAndLockTargetClass(tx, classId, activeAcademicYear.id, req.institutionId);
       }
 
-      // Create student record
+      // Create student record with explicit institutionId
       const createdStudent = await tx.student.create({
         data: {
-          admissionNo,
-          firstName,
-          lastName,
-          fatherName: fatherName || null,
-          motherName: motherName || null,
-          email: email || null,
-          phone: phone || null,
+          institutionId: req.institutionId,
+          admissionNo: trimmedAdmissionNo,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          fatherName: fatherName ? fatherName.trim() : null,
+          motherName: motherName ? motherName.trim() : null,
+          email: email ? email.trim() : null,
+          phone: phone ? phone.trim() : null,
           dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
           gender: gender || 'MALE',
-          address: address || null,
+          address: address ? address.trim() : null,
           admissionDate: admissionDate ? new Date(admissionDate) : new Date(),
-          classId: classId || null, // Synchronized legacy field
+          classId: classId || null,
           status: status || 'ACTIVE',
-          guardianName: guardianName || null,
-          guardianPhone: guardianPhone || null,
-          guardianEmail: guardianEmail || null,
-          guardianRelation: guardianRelation || null,
+          guardianName: guardianName ? guardianName.trim() : null,
+          guardianPhone: guardianPhone ? guardianPhone.trim() : null,
+          guardianEmail: guardianEmail ? guardianEmail.trim() : null,
+          guardianRelation: guardianRelation ? guardianRelation.trim() : null,
           bloodGroup: bloodGroup || null,
           nationality: nationality || 'Indian',
-          idNumber: idNumber || null,
-          previousSchool: previousSchool || null,
-          emergencyContact: emergencyContact || null,
-          medicalNotes: medicalNotes || null,
+          idNumber: idNumber ? idNumber.trim() : null,
+          previousSchool: previousSchool ? previousSchool.trim() : null,
+          emergencyContact: emergencyContact ? emergencyContact.trim() : null,
+          medicalNotes: medicalNotes ? medicalNotes.trim() : null,
         },
       });
 
@@ -461,10 +503,10 @@ router.post('/', requirePermission('students.create'), async (req, res, next) =>
 
     // Save custom field values if provided
     if (customFields && typeof customFields === 'object') {
-      await saveCustomFieldValues(req.prisma, newStudent.id, customFields);
+      await saveCustomFieldValues(req.prisma, req.institutionId, newStudent.id, customFields);
     }
 
-    const full = await getDeterministicStudent(req.prisma, newStudent.id);
+    const full = await getDeterministicStudent(req.prisma, newStudent.id, req.institutionId);
     res.status(201).json({ success: true, data: full });
   } catch (error) {
     if (error.code === 'P2002' && error.meta?.target?.includes('enrollments')) {
@@ -476,7 +518,7 @@ router.post('/', requirePermission('students.create'), async (req, res, next) =>
 
 /**
  * PUT /api/students/:id
- * Transactional update with explicit classId handling (undefined vs null vs "some-id")
+ * Transactional update with explicit classId handling & institution scoping
  */
 router.put('/:id', requirePermission('students.edit'), async (req, res, next) => {
   try {
@@ -490,16 +532,30 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
       customFields,
     } = req.body;
 
-    const existingStudent = await req.prisma.student.findUnique({ where: { id: req.params.id } });
+    const existingStudent = await req.prisma.student.findFirst({
+      where: {
+        id: req.params.id,
+        institutionId: req.institutionId,
+      },
+    });
     if (!existingStudent) {
       throw new AppError('Student not found', 404, 'STUDENT_NOT_FOUND');
     }
 
-    // Check admission number uniqueness
-    if (admissionNo && admissionNo !== existingStudent.admissionNo) {
-      const duplicate = await req.prisma.student.findUnique({ where: { admissionNo } });
+    const trimmedAdmissionNo = admissionNo ? admissionNo.trim() : null;
+
+    // Check admission number uniqueness within this institution
+    if (trimmedAdmissionNo && trimmedAdmissionNo !== existingStudent.admissionNo) {
+      const duplicate = await req.prisma.student.findUnique({
+        where: {
+          institutionId_admissionNo: {
+            institutionId: req.institutionId,
+            admissionNo: trimmedAdmissionNo,
+          },
+        },
+      });
       if (duplicate) {
-        throw new AppError(`Admission number "${admissionNo}" is already taken`, 409, 'DUPLICATE_ADMISSION_NO');
+        throw new AppError(`Admission number "${trimmedAdmissionNo}" is already taken`, 409, 'DUPLICATE_ADMISSION_NO');
       }
     }
 
@@ -508,7 +564,13 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
       if (classId !== undefined) {
         if (classId === null) {
           // Explicit Class Removal
-          const activeAcademicYear = await tx.academicYear.findFirst({ where: { isCurrent: true } });
+          let activeAcademicYear = null;
+          try {
+            activeAcademicYear = await getCurrentAcademicYear(tx, req.institutionId);
+          } catch {
+            activeAcademicYear = null;
+          }
+
           if (activeAcademicYear) {
             const activeEnrollments = await tx.enrollment.findMany({
               where: {
@@ -537,14 +599,13 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
               });
             }
           }
-          // Set Student.classId = null
           await tx.student.update({
             where: { id: req.params.id },
             data: { classId: null },
           });
         } else {
           // Explicit Assignment or Transfer to target class
-          const activeAcademicYear = await resolveActiveAcademicYear(tx);
+          const activeAcademicYear = await resolveActiveAcademicYear(tx, req.institutionId);
 
           const activeEnrollments = await tx.enrollment.findMany({
             where: {
@@ -564,19 +625,17 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
 
           const currentActive = activeEnrollments[0];
 
-          // Check No-Op Case
           if (currentActive && currentActive.classId === classId) {
-            // Same class — sync legacy classId and keep enrollment unchanged
+            // Same class — sync legacy classId
             await tx.student.update({
               where: { id: req.params.id },
               data: { classId },
             });
           } else {
             // Target Class & Capacity Validation with Row Lock
-            await validateAndLockTargetClass(tx, classId, activeAcademicYear.id);
+            await validateAndLockTargetClass(tx, classId, activeAcademicYear.id, req.institutionId);
 
             if (currentActive) {
-              // Mark old enrollment TRANSFERRED
               await tx.enrollment.update({
                 where: { id: currentActive.id },
                 data: {
@@ -586,7 +645,6 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
               });
             }
 
-            // Create new ACTIVE enrollment
             await tx.enrollment.create({
               data: {
                 studentId: req.params.id,
@@ -597,7 +655,6 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
               },
             });
 
-            // Synchronize legacy Student.classId
             await tx.student.update({
               where: { id: req.params.id },
               data: { classId },
@@ -606,41 +663,41 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
         }
       }
 
-      // Update remaining student metadata fields
+      // Update student metadata fields
       await tx.student.update({
         where: { id: req.params.id },
         data: {
-          ...(admissionNo && { admissionNo }),
-          ...(firstName && { firstName }),
-          ...(lastName && { lastName }),
-          ...(fatherName !== undefined && { fatherName: fatherName || null }),
-          ...(motherName !== undefined && { motherName: motherName || null }),
-          ...(email !== undefined && { email: email || null }),
-          ...(phone !== undefined && { phone: phone || null }),
+          ...(trimmedAdmissionNo && { admissionNo: trimmedAdmissionNo }),
+          ...(firstName && { firstName: firstName.trim() }),
+          ...(lastName && { lastName: lastName.trim() }),
+          ...(fatherName !== undefined && { fatherName: fatherName ? fatherName.trim() : null }),
+          ...(motherName !== undefined && { motherName: motherName ? motherName.trim() : null }),
+          ...(email !== undefined && { email: email ? email.trim() : null }),
+          ...(phone !== undefined && { phone: phone ? phone.trim() : null }),
           ...(dateOfBirth !== undefined && { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null }),
           ...(gender && { gender }),
-          ...(address !== undefined && { address: address || null }),
+          ...(address !== undefined && { address: address ? address.trim() : null }),
           ...(admissionDate && { admissionDate: new Date(admissionDate) }),
           ...(status && { status }),
-          ...(guardianName !== undefined && { guardianName: guardianName || null }),
-          ...(guardianPhone !== undefined && { guardianPhone: guardianPhone || null }),
-          ...(guardianEmail !== undefined && { guardianEmail: guardianEmail || null }),
-          ...(guardianRelation !== undefined && { guardianRelation: guardianRelation || null }),
+          ...(guardianName !== undefined && { guardianName: guardianName ? guardianName.trim() : null }),
+          ...(guardianPhone !== undefined && { guardianPhone: guardianPhone ? guardianPhone.trim() : null }),
+          ...(guardianEmail !== undefined && { guardianEmail: guardianEmail ? guardianEmail.trim() : null }),
+          ...(guardianRelation !== undefined && { guardianRelation: guardianRelation ? guardianRelation.trim() : null }),
           ...(bloodGroup !== undefined && { bloodGroup: bloodGroup || null }),
           ...(nationality !== undefined && { nationality: nationality || null }),
-          ...(idNumber !== undefined && { idNumber: idNumber || null }),
-          ...(previousSchool !== undefined && { previousSchool: previousSchool || null }),
-          ...(emergencyContact !== undefined && { emergencyContact: emergencyContact || null }),
-          ...(medicalNotes !== undefined && { medicalNotes: medicalNotes || null }),
+          ...(idNumber !== undefined && { idNumber: idNumber ? idNumber.trim() : null }),
+          ...(previousSchool !== undefined && { previousSchool: previousSchool ? previousSchool.trim() : null }),
+          ...(emergencyContact !== undefined && { emergencyContact: emergencyContact ? emergencyContact.trim() : null }),
+          ...(medicalNotes !== undefined && { medicalNotes: medicalNotes ? medicalNotes.trim() : null }),
         },
       });
     });
 
     if (customFields && typeof customFields === 'object') {
-      await saveCustomFieldValues(req.prisma, req.params.id, customFields);
+      await saveCustomFieldValues(req.prisma, req.institutionId, req.params.id, customFields);
     }
 
-    const updatedStudent = await getDeterministicStudent(req.prisma, req.params.id);
+    const updatedStudent = await getDeterministicStudent(req.prisma, req.params.id, req.institutionId);
     res.json({ success: true, data: updatedStudent });
   } catch (error) {
     if (error.code === 'P2002' && error.meta?.target?.includes('enrollments')) {
@@ -652,12 +709,54 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
 
 /**
  * DELETE /api/students/:id
+ * Deactivates student if historical relations exist to protect ERP integrity; physical delete only for zero-history records
  */
 router.delete('/:id', requirePermission('students.delete'), async (req, res, next) => {
   try {
-    const existing = await req.prisma.student.findUnique({ where: { id: req.params.id } });
+    const existing = await req.prisma.student.findFirst({
+      where: {
+        id: req.params.id,
+        institutionId: req.institutionId,
+      },
+      include: {
+        _count: {
+          select: {
+            enrollments: true,
+            attendances: true,
+            results: true,
+          },
+        },
+      },
+    });
+
     if (!existing) {
       throw new AppError('Student not found', 404, 'STUDENT_NOT_FOUND');
+    }
+
+    const hasHistory =
+      existing._count.enrollments > 0 ||
+      existing._count.attendances > 0 ||
+      existing._count.results > 0;
+
+    if (hasHistory) {
+      // Historical safety: Archive/deactivate rather than hard deleting
+      await req.prisma.$transaction(async (tx) => {
+        await tx.enrollment.updateMany({
+          where: { studentId: req.params.id, status: 'ACTIVE' },
+          data: { status: 'WITHDRAWN', exitDate: new Date() },
+        });
+
+        await tx.student.update({
+          where: { id: req.params.id },
+          data: { status: 'INACTIVE', classId: null },
+        });
+      });
+
+      return res.json({
+        success: true,
+        archived: true,
+        message: `Student "${existing.firstName} ${existing.lastName}" has linked historical records and was marked INACTIVE instead of deleted.`,
+      });
     }
 
     await req.prisma.student.delete({ where: { id: req.params.id } });
@@ -672,11 +771,11 @@ router.delete('/:id', requirePermission('students.delete'), async (req, res, nex
 });
 
 /**
- * Helper: Save custom field values for a student
+ * Helper: Save custom field values for a student scoped to institution
  */
-async function saveCustomFieldValues(prisma, studentId, customFields) {
+async function saveCustomFieldValues(prisma, institutionId, studentId, customFields) {
   const fieldDefs = await prisma.customField.findMany({
-    where: { isActive: true },
+    where: { institutionId, isActive: true },
   });
 
   const keyToId = {};

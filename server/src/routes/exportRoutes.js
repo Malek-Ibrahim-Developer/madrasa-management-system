@@ -1,3 +1,8 @@
+/**
+ * Export Routes — Excel & PDF Export for Students
+ * Altus Kairos — Tenant & Relationship Integrity Hardening
+ */
+
 const express = require('express');
 const router = express.Router();
 const ExcelJS = require('exceljs');
@@ -6,14 +11,17 @@ const PDFDocument = require('pdfkit');
 const requirePermission = require('../middleware/requirePermission');
 const { requireInstitutionContext } = require('../middleware/institutionContext');
 const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+const AppError = require('../utils/AppError');
 
 router.use(requireInstitutionContext);
 router.use(requireModuleEnabled('studentsEnabled'));
 
-// Helper to build where clause based on query params using Authoritative Enrollment
-const buildWhereClause = (query) => {
+// Helper to build where clause strictly scoped to institution
+const buildWhereClause = (query, institutionId) => {
   const { search, classId, status, gender, bloodGroup, dateFrom, dateTo } = query;
-  const where = {};
+  const where = {
+    institutionId,
+  };
 
   if (search) {
     where.OR = [
@@ -28,7 +36,7 @@ const buildWhereClause = (query) => {
       some: {
         classId: classId,
         status: 'ACTIVE',
-        academicYear: { isCurrent: true },
+        academicYear: { isCurrent: true, institutionId },
       },
     };
   }
@@ -51,7 +59,9 @@ const buildWhereClause = (query) => {
       where.admissionDate.gte = new Date(dateFrom);
     }
     if (dateTo) {
-      where.admissionDate.lte = new Date(dateTo);
+      const endOfDay = new Date(dateTo);
+      endOfDay.setUTCHours(23, 59, 59, 999);
+      where.admissionDate.lte = endOfDay;
     }
   }
 
@@ -69,17 +79,20 @@ const formatDate = (date) => {
 };
 
 // GET /api/export/students/excel
-router.get('/students/excel', requirePermission('students.view'), async (req, res) => {
+router.get('/students/excel', requirePermission('students.view'), async (req, res, next) => {
   try {
-    const where = buildWhereClause(req.query);
+    const where = buildWhereClause(req.query, req.institutionId);
 
-    // Fetch active custom fields
+    // Fetch active custom fields strictly for this institution
     const customFields = await req.prisma.customField.findMany({
-      where: { isActive: true },
+      where: {
+        institutionId: req.institutionId,
+        isActive: true,
+      },
       orderBy: { sortOrder: 'asc' },
     });
 
-    // Fetch students with active enrollment data
+    // Fetch students with active enrollment data strictly for this institution
     const students = await req.prisma.student.findMany({
       where,
       include: {
@@ -87,18 +100,21 @@ router.get('/students/excel', requirePermission('students.view'), async (req, re
         enrollments: {
           where: {
             status: 'ACTIVE',
-            academicYear: { isCurrent: true },
+            academicYear: { isCurrent: true, institutionId: req.institutionId },
           },
           include: { class: true },
           take: 1,
         },
         customFieldValues: {
+          where: {
+            customField: { institutionId: req.institutionId },
+          },
           include: {
             customField: true,
-          }
-        }
+          },
+        },
       },
-      orderBy: { admissionNo: 'asc' }
+      orderBy: { admissionNo: 'asc' },
     });
 
     const workbook = new ExcelJS.Workbook();
@@ -130,11 +146,11 @@ router.get('/students/excel', requirePermission('students.view'), async (req, re
     ];
 
     // Add custom field columns
-    customFields.forEach(cf => {
+    customFields.forEach((cf) => {
       columns.push({
         header: cf.name,
         key: `cf_${cf.fieldKey}`,
-        width: 20
+        width: 20,
       });
     });
 
@@ -147,13 +163,13 @@ router.get('/students/excel', requirePermission('students.view'), async (req, re
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FFE6F5F3' }
+        fgColor: { argb: 'FFE6F5F3' },
       };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
 
     // Add data rows
-    students.forEach((student, index) => {
+    students.forEach((student) => {
       const activeClass = student.enrollments?.[0]?.class || student.class;
       const className = activeClass ? (activeClass.name || activeClass.className || '') : '';
 
@@ -178,9 +194,8 @@ router.get('/students/excel', requirePermission('students.view'), async (req, re
         admissionDate: formatDate(student.admissionDate),
       };
 
-      // Add custom field values
       if (student.customFieldValues) {
-        student.customFieldValues.forEach(cfv => {
+        student.customFieldValues.forEach((cfv) => {
           rowData[`cf_${cfv.customField.fieldKey}`] = cfv.value;
         });
       }
@@ -188,15 +203,15 @@ router.get('/students/excel', requirePermission('students.view'), async (req, re
       sheet.addRow(rowData);
     });
 
-    // Fix the alternating color argb
+    // Alternating zebra color
     students.forEach((student, index) => {
-      if (index % 2 === 1) { 
+      if (index % 2 === 1) {
         const row = sheet.getRow(index + 2);
         row.eachCell((cell) => {
           cell.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: 'FFF8FAFB' }
+            fgColor: { argb: 'FFF8FAFB' },
           };
         });
       }
@@ -210,20 +225,17 @@ router.get('/students/excel', requirePermission('students.view'), async (req, re
 
     await workbook.xlsx.write(res);
     res.end();
-
   } catch (error) {
-    console.error('Export Excel Error:', error);
-    res.status(500).json({ success: false, message: 'Failed to generate Excel file', error: error.message });
+    next(error);
   }
 });
 
-// Helper function for PDF columns
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
 // GET /api/export/students/pdf
-router.get('/students/pdf', requirePermission('students.view'), async (req, res) => {
+router.get('/students/pdf', requirePermission('students.view'), async (req, res, next) => {
   try {
-    const where = buildWhereClause(req.query);
+    const where = buildWhereClause(req.query, req.institutionId);
 
     const students = await req.prisma.student.findMany({
       where,
@@ -232,13 +244,13 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
         enrollments: {
           where: {
             status: 'ACTIVE',
-            academicYear: { isCurrent: true },
+            academicYear: { isCurrent: true, institutionId: req.institutionId },
           },
           include: { class: true },
           take: 1,
         },
       },
-      orderBy: { admissionNo: 'asc' }
+      orderBy: { admissionNo: 'asc' },
     });
 
     const doc = new PDFDocument({ margin: 30, size: 'A4' });
@@ -260,7 +272,7 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
     if (req.query.classId) filterStr.push(`Class: ${req.query.classId}`);
     if (req.query.status) filterStr.push(`Status: ${req.query.status}`);
     const subtitle = `Export Date: ${formatDate(new Date())} | Filters: ${filterStr.length > 0 ? filterStr.join(', ') : 'None'}`;
-    
+
     doc.fontSize(10).text(subtitle, { align: 'center' });
     doc.moveDown(2);
 
@@ -268,7 +280,7 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
     const tableTop = doc.y;
     const colWidths = [60, 140, 80, 120, 70, 60];
     const startX = 30;
-    
+
     const drawRow = (y, cols, isHeader = false) => {
       doc.fontSize(isHeader ? 10 : 9).font(isHeader ? 'Helvetica-Bold' : 'Helvetica');
       let currentX = startX;
@@ -278,15 +290,12 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
       });
     };
 
-    // Draw header
     drawRow(tableTop, ['Admission No', 'Name', 'Class', 'Father Name', 'Phone', 'Status'], true);
-    
-    // Draw line under header
+
     let currentY = tableTop + 15;
-    doc.moveTo(startX, currentY).lineTo(startX + sum(colWidths) + (colWidths.length * 5), currentY).stroke();
+    doc.moveTo(startX, currentY).lineTo(startX + sum(colWidths) + colWidths.length * 5, currentY).stroke();
     currentY += 10;
 
-    // Draw rows
     const rowHeight = 20;
     students.forEach((student) => {
       if (currentY > doc.page.height - 50) {
@@ -294,7 +303,7 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
         currentY = 30;
         drawRow(currentY, ['Admission No', 'Name', 'Class', 'Father Name', 'Phone', 'Status'], true);
         currentY += 15;
-        doc.moveTo(startX, currentY).lineTo(startX + sum(colWidths) + (colWidths.length * 5), currentY).stroke();
+        doc.moveTo(startX, currentY).lineTo(startX + sum(colWidths) + colWidths.length * 5, currentY).stroke();
         currentY += 10;
       }
 
@@ -307,7 +316,7 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
         className,
         student.fatherName || '',
         student.phone || '',
-        student.status || ''
+        student.status || '',
       ];
 
       drawRow(currentY, cols);
@@ -315,10 +324,8 @@ router.get('/students/pdf', requirePermission('students.view'), async (req, res)
     });
 
     doc.end();
-
   } catch (error) {
-    console.error('Export PDF Error:', error);
-    res.status(500).json({ success: false, message: 'Failed to generate PDF file', error: error.message });
+    next(error);
   }
 });
 

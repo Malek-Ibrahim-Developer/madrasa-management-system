@@ -1,6 +1,7 @@
 /**
  * Attendance Service — Core business logic for daily attendance,
  * transfer-safe marking, clear/unmark, and weighted monthly statistics.
+ * Altus Kairos — Tenant & Relationship Integrity Hardening
  */
 
 const AppError = require('../utils/AppError');
@@ -8,9 +9,9 @@ const { startOfDay, endOfDay, isEnrollmentEffectiveOnDate } = require('../utils/
 const auditService = require('./auditService');
 
 /**
- * Fetch daily attendance roster for a class on a specific business date
+ * Fetch daily attendance roster for a class on a specific business date with institution scope
  */
-async function getDailyAttendance(prisma, { classId, date }) {
+async function getDailyAttendance(prisma, { institutionId = null, classId, date }) {
   if (!classId || !date) {
     throw new AppError('classId and date are required', 400, 'VALIDATION_ERROR');
   }
@@ -18,9 +19,14 @@ async function getDailyAttendance(prisma, { classId, date }) {
   const targetDate = startOfDay(date);
   const finishDate = endOfDay(date);
 
-  // 1. Verify class exists
-  const classRecord = await prisma.class.findUnique({
-    where: { id: classId },
+  // 1. Verify class exists and belongs to institution
+  const classRecord = await prisma.class.findFirst({
+    where: {
+      id: classId,
+      ...(institutionId && {
+        academicYear: { institutionId },
+      }),
+    },
     include: { academicYear: true },
   });
 
@@ -50,8 +56,8 @@ async function getDailyAttendance(prisma, { classId, date }) {
     ],
   });
 
-  const effectiveEnrollments = enrollments.filter(e => isEnrollmentEffectiveOnDate(e, targetDate));
-  const studentIds = effectiveEnrollments.map(e => e.studentId);
+  const effectiveEnrollments = enrollments.filter((e) => isEnrollmentEffectiveOnDate(e, targetDate));
+  const studentIds = effectiveEnrollments.map((e) => e.studentId);
 
   // 3. Fetch existing attendance records
   const attendances = await prisma.attendance.findMany({
@@ -66,10 +72,10 @@ async function getDailyAttendance(prisma, { classId, date }) {
   });
 
   const attendanceMap = new Map();
-  attendances.forEach(a => attendanceMap.set(a.studentId, a));
+  attendances.forEach((a) => attendanceMap.set(a.studentId, a));
 
   // 4. Combine effective students with attendance records
-  const records = effectiveEnrollments.map(enrollment => {
+  const records = effectiveEnrollments.map((enrollment) => {
     const student = enrollment.student;
     const record = attendanceMap.get(student.id);
 
@@ -84,7 +90,7 @@ async function getDailyAttendance(prisma, { classId, date }) {
     };
   });
 
-  const markedCount = records.filter(r => r.status !== null).length;
+  const markedCount = records.filter((r) => r.status !== null).length;
 
   return {
     date: date.toString().split('T')[0],
@@ -98,9 +104,10 @@ async function getDailyAttendance(prisma, { classId, date }) {
 }
 
 /**
- * Mark, update, or clear attendance records inside a transactional boundary
+ * Mark, update, or clear attendance records inside a transactional boundary with tenant scope
  */
 async function markAttendance(prisma, {
+  institutionId = null,
   classId,
   date,
   records,
@@ -113,11 +120,15 @@ async function markAttendance(prisma, {
   }
 
   const attendanceDate = startOfDay(date);
-  const finishDate = endOfDay(date);
 
-  // 1. Verify class
-  const classRecord = await prisma.class.findUnique({
-    where: { id: classId },
+  // 1. Verify class belongs to institution
+  const classRecord = await prisma.class.findFirst({
+    where: {
+      id: classId,
+      ...(institutionId && {
+        academicYear: { institutionId },
+      }),
+    },
     include: { academicYear: true },
   });
 
@@ -229,7 +240,7 @@ async function markAttendance(prisma, {
 
     // Audit log
     await auditService.record(tx, {
-      institutionId: classRecord.academicYear?.institutionId || null,
+      institutionId: classRecord.academicYear.institutionId,
       userId: actor?.id || null,
       action: 'ATTENDANCE_MARKED',
       entityType: 'Attendance',
@@ -249,10 +260,9 @@ async function markAttendance(prisma, {
 }
 
 /**
- * Monthly attendance statistics with date-aware eligible denominators
- * and mathematically sound weighted monthly attendance average.
+ * Monthly attendance statistics with date-aware eligible denominators strictly scoped to institution
  */
-async function getAttendanceStats(prisma, { classId, month, year }) {
+async function getAttendanceStats(prisma, { institutionId = null, classId, month, year }) {
   if (!classId || !month || !year) {
     throw new AppError('classId, month, and year are required', 400, 'VALIDATION_ERROR');
   }
@@ -263,8 +273,13 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
   const startDate = new Date(Date.UTC(parsedYear, parsedMonth - 1, 1));
   const endDate = new Date(Date.UTC(parsedYear, parsedMonth, 0, 23, 59, 59, 999));
 
-  const classRecord = await prisma.class.findUnique({
-    where: { id: classId },
+  const classRecord = await prisma.class.findFirst({
+    where: {
+      id: classId,
+      ...(institutionId && {
+        academicYear: { institutionId },
+      }),
+    },
     select: { name: true, academicYearId: true },
   });
 
@@ -297,7 +312,7 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
   });
 
   const attendanceByDay = new Map();
-  attendances.forEach(a => {
+  attendances.forEach((a) => {
     const dayKey = a.date.toISOString().split('T')[0];
     if (!attendanceByDay.has(dayKey)) {
       attendanceByDay.set(dayKey, []);
@@ -305,7 +320,6 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
     attendanceByDay.get(dayKey).push(a);
   });
 
-  // Calculate day-by-day stats
   const dailyStats = [];
   let totalAttendedStudentDays = 0;
   let totalEligibleStudentDays = 0;
@@ -317,8 +331,7 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
     const currentDayDate = new Date(Date.UTC(parsedYear, parsedMonth - 1, d));
     const dayKey = currentDayDate.toISOString().split('T')[0];
 
-    // Compute eligible students on this specific day
-    const eligibleCount = enrollments.filter(e => isEnrollmentEffectiveOnDate(e, currentDayDate)).length;
+    const eligibleCount = enrollments.filter((e) => isEnrollmentEffectiveOnDate(e, currentDayDate)).length;
 
     const dayRecords = attendanceByDay.get(dayKey) || [];
 
@@ -327,7 +340,7 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
     let late = 0;
     let excused = 0;
 
-    dayRecords.forEach(r => {
+    dayRecords.forEach((r) => {
       if (r.status === 'PRESENT') present++;
       else if (r.status === 'ABSENT') absent++;
       else if (r.status === 'LATE') late++;
@@ -361,7 +374,6 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
     });
   }
 
-  // Weighted Monthly Average
   const averageAttendance = totalEligibleStudentDays > 0
     ? parseFloat(((totalAttendedStudentDays / totalEligibleStudentDays) * 100).toFixed(1))
     : 0;
@@ -379,10 +391,9 @@ async function getAttendanceStats(prisma, { classId, month, year }) {
 }
 
 /**
- * Attendance range report querying students strictly via effective enrollment periods,
- * completely eliminating legacy Student.classId queries.
+ * Attendance range report querying students strictly via effective enrollment periods with tenant scoping
  */
-async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
+async function getAttendanceReport(prisma, { institutionId = null, classId, dateFrom, dateTo }) {
   if (!classId || !dateFrom || !dateTo) {
     throw new AppError('classId, dateFrom, and dateTo are required', 400, 'VALIDATION_ERROR');
   }
@@ -390,8 +401,13 @@ async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
   const startDate = startOfDay(dateFrom);
   const endDate = endOfDay(dateTo);
 
-  const classRecord = await prisma.class.findUnique({
-    where: { id: classId },
+  const classRecord = await prisma.class.findFirst({
+    where: {
+      id: classId,
+      ...(institutionId && {
+        academicYear: { institutionId },
+      }),
+    },
     select: { name: true, academicYearId: true },
   });
 
@@ -399,7 +415,6 @@ async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
     throw new AppError('Class not found', 404, 'CLASS_NOT_FOUND');
   }
 
-  // Fetch all students who were enrolled in this class during the range
   const enrollments = await prisma.enrollment.findMany({
     where: {
       classId,
@@ -422,7 +437,7 @@ async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
   });
 
   const studentMap = new Map();
-  enrollments.forEach(e => {
+  enrollments.forEach((e) => {
     studentMap.set(e.student.id, {
       studentId: e.student.id,
       studentName: `${e.student.firstName} ${e.student.lastName}`.trim(),
@@ -436,7 +451,6 @@ async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
     });
   });
 
-  // Fetch all attendances for the range
   const attendances = await prisma.attendance.findMany({
     where: {
       classId,
@@ -448,7 +462,7 @@ async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
     },
   });
 
-  attendances.forEach(r => {
+  attendances.forEach((r) => {
     if (studentMap.has(r.studentId)) {
       const stats = studentMap.get(r.studentId);
       if (r.status === 'PRESENT') stats.present++;
@@ -459,7 +473,7 @@ async function getAttendanceReport(prisma, { classId, dateFrom, dateTo }) {
     }
   });
 
-  const report = Array.from(studentMap.values()).map(stats => {
+  const report = Array.from(studentMap.values()).map((stats) => {
     const attended = stats.present + stats.late + stats.excused;
     const percentage = stats.total > 0
       ? parseFloat(((attended / stats.total) * 100).toFixed(1))

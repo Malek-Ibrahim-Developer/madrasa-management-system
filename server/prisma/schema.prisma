@@ -37,6 +37,7 @@ model Institution {
   customFields   CustomField[]
   teachers       Teacher[]
   subjects       Subject[]
+  students       Student[]
 
   @@map("institutions")
 }
@@ -113,19 +114,20 @@ model AcademicYear {
 /// Teacher / Staff member
 model Teacher {
   id            String   @id @default(cuid())
-  institutionId String?
+  institutionId String
   name          String
-  email         String?  @unique
+  email         String?
   phone         String?
   isActive      Boolean  @default(true)
 
-  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   classes   ClassTeacher[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([institutionId])
+  @@unique([institutionId, email])
+  @@index([institutionId, name])
   @@map("teachers")
 }
 
@@ -134,13 +136,13 @@ model Class {
   id             String      @id @default(cuid())
   name           String
   section        String?
-  code           String      @unique
+  code           String
   teacher        String?
   capacity       Int         @default(40)
   status         ClassStatus @default(ACTIVE)
 
   academicYearId String
-  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
 
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
@@ -153,6 +155,7 @@ model Class {
   teachers    ClassTeacher[]
   subjects    ClassSubject[]
 
+  @@unique([academicYearId, code])
   @@index([academicYearId])
   @@index([status])
   @@index([name])
@@ -183,18 +186,19 @@ model ClassTeacher {
 /// Subject definition
 model Subject {
   id            String  @id @default(cuid())
-  institutionId String?
+  institutionId String
   name          String
-  code          String  @unique
+  code          String
   description   String?
   isActive      Boolean @default(true)
 
-  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   classes ClassSubject[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([institutionId, code])
   @@index([institutionId])
   @@index([isActive])
   @@map("subjects")
@@ -237,8 +241,8 @@ model Enrollment {
   status         EnrollmentStatus @default(ACTIVE)
 
   student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  class        Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  class        Class        @relation(fields: [classId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
   attendances  Attendance[]
 
   createdAt DateTime @default(now())
@@ -359,7 +363,8 @@ model AuditLog {
 
 model Student {
   id            String   @id @default(cuid())
-  admissionNo   String   @unique
+  institutionId String
+  admissionNo   String
   firstName     String
   lastName      String
   fatherName    String?
@@ -385,6 +390,8 @@ model Student {
   medicalNotes     String?
   photoUrl         String?
 
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+
   classId       String?
   class         Class?   @relation(fields: [classId], references: [id])
 
@@ -396,6 +403,8 @@ model Student {
   customFieldValues CustomFieldValue[]
   enrollments      Enrollment[]
 
+  @@unique([institutionId, admissionNo])
+  @@index([institutionId, status])
   @@map("students")
 }
 

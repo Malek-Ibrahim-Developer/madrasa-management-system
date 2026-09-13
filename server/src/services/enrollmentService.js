@@ -1,6 +1,7 @@
 /**
  * Enrollment Service — Core domain service managing authoritative student memberships,
  * promotions, class transfers, and withdrawals.
+ * Altus Kairos — Tenant & Relationship Integrity Hardening
  */
 
 const AppError = require('../utils/AppError');
@@ -8,10 +9,11 @@ const { startOfDay, isEnrollmentEffectiveOnDate } = require('../utils/enrollment
 const auditService = require('./auditService');
 
 /**
- * Get active enrollment for a student in a specific academic year
+ * Get active enrollment for a student in a specific academic year.
+ * Detects and raises corruption conflicts if multiple active enrollments exist.
  */
 async function getActiveEnrollment(tx, studentId, academicYearId) {
-  return tx.enrollment.findFirst({
+  const active = await tx.enrollment.findMany({
     where: {
       studentId,
       academicYearId,
@@ -21,7 +23,18 @@ async function getActiveEnrollment(tx, studentId, academicYearId) {
       class: true,
       academicYear: true,
     },
+    take: 2,
   });
+
+  if (active.length > 1) {
+    throw new AppError(
+      'Data integrity conflict: multiple ACTIVE enrollments exist for the student in the same academic year.',
+      409,
+      'MULTIPLE_ACTIVE_ENROLLMENTS'
+    );
+  }
+
+  return active[0] || null;
 }
 
 /**
@@ -47,13 +60,14 @@ async function getEffectiveEnrollment(tx, studentId, academicYearId, date) {
     orderBy: { enrollmentDate: 'desc' },
   });
 
-  return enrollments.find(e => isEnrollmentEffectiveOnDate(e, targetDate)) || null;
+  return enrollments.find((e) => isEnrollmentEffectiveOnDate(e, targetDate)) || null;
 }
 
 /**
- * Enroll a student into a class with atomic capacity and uniqueness validation
+ * Enroll a student into a class with atomic capacity, tenant isolation, and uniqueness validation
  */
 async function enrollStudent(tx, {
+  institutionId = null,
   studentId,
   classId,
   academicYearId = null,
@@ -63,13 +77,19 @@ async function enrollStudent(tx, {
   ipAddress = null,
   userAgent = null,
 }) {
-  // 1. Validate student exists
-  const student = await tx.student.findUnique({ where: { id: studentId } });
+  // 1. Validate student exists and belongs to institution
+  const student = await tx.student.findUnique({
+    where: { id: studentId },
+  });
   if (!student) {
     throw new AppError('Student not found', 404, 'STUDENT_NOT_FOUND');
   }
 
-  // 2. Validate class exists and is ACTIVE
+  if (institutionId && student.institutionId !== institutionId) {
+    throw new AppError('Student not found in current institution', 404, 'STUDENT_NOT_FOUND');
+  }
+
+  // 2. Validate class exists, belongs to same institution, and is ACTIVE
   const classRecord = await tx.class.findUnique({
     where: { id: classId },
     include: { academicYear: true },
@@ -77,6 +97,15 @@ async function enrollStudent(tx, {
   if (!classRecord) {
     throw new AppError('Target class not found', 404, 'CLASS_NOT_FOUND');
   }
+
+  if (institutionId && classRecord.academicYear.institutionId !== institutionId) {
+    throw new AppError('Target class not found in current institution', 404, 'CLASS_NOT_FOUND');
+  }
+
+  if (student.institutionId !== classRecord.academicYear.institutionId) {
+    throw new AppError('Cross-institution enrollment is prohibited: Student and Class belong to different institutions', 403, 'CROSS_TENANT_ENROLLMENT_PROHIBITED');
+  }
+
   if (classRecord.status !== 'ACTIVE') {
     throw new AppError('Cannot enroll in a class that is not ACTIVE', 409, 'CLASS_NOT_ACTIVE');
   }
@@ -132,7 +161,7 @@ async function enrollStudent(tx, {
 
   // 8. Audit trail
   await auditService.record(tx, {
-    institutionId: classRecord.academicYear?.institutionId || null,
+    institutionId: classRecord.academicYear.institutionId,
     userId: actor?.id || null,
     action: 'STUDENT_ENROLLED',
     entityType: 'Enrollment',
@@ -146,9 +175,10 @@ async function enrollStudent(tx, {
 }
 
 /**
- * Transfer a student from one class to another atomically
+ * Transfer a student from one class to another atomically ensuring same institution
  */
 async function transferStudent(tx, {
+  institutionId = null,
   studentId,
   targetClassId,
   transferDate = new Date(),
@@ -168,6 +198,11 @@ async function transferStudent(tx, {
   if (!targetClass) {
     throw new AppError('Target class not found', 404, 'CLASS_NOT_FOUND');
   }
+
+  if (institutionId && targetClass.academicYear.institutionId !== institutionId) {
+    throw new AppError('Target class not found in current institution', 404, 'CLASS_NOT_FOUND');
+  }
+
   if (targetClass.status !== 'ACTIVE') {
     throw new AppError('Target class is not ACTIVE', 409, 'CLASS_NOT_ACTIVE');
   }
@@ -176,6 +211,10 @@ async function transferStudent(tx, {
   const currentEnrollment = await getActiveEnrollment(tx, studentId, targetClass.academicYearId);
   if (!currentEnrollment) {
     throw new AppError('Student does not have an active enrollment to transfer from', 404, 'ENROLLMENT_NOT_FOUND');
+  }
+
+  if (currentEnrollment.academicYear.institutionId !== targetClass.academicYear.institutionId) {
+    throw new AppError('Cross-institution transfer is prohibited', 403, 'CROSS_TENANT_TRANSFER_PROHIBITED');
   }
 
   if (currentEnrollment.classId === targetClassId) {
@@ -226,7 +265,7 @@ async function transferStudent(tx, {
 
   // 7. Audit trail
   await auditService.record(tx, {
-    institutionId: targetClass.academicYear?.institutionId || null,
+    institutionId: targetClass.academicYear.institutionId,
     userId: actor?.id || null,
     action: 'STUDENT_TRANSFERRED',
     entityType: 'Enrollment',
@@ -244,6 +283,7 @@ async function transferStudent(tx, {
  * Withdraw a student from their active enrollment
  */
 async function withdrawStudent(tx, {
+  institutionId = null,
   studentId,
   academicYearId = null,
   withdrawalDate = new Date(),
@@ -254,10 +294,23 @@ async function withdrawStudent(tx, {
 }) {
   const targetDate = startOfDay(withdrawalDate);
 
-  // 1. Resolve active enrollment
-  const activeYear = academicYearId
-    ? await tx.academicYear.findUnique({ where: { id: academicYearId } })
-    : await tx.academicYear.findFirst({ where: { isCurrent: true } });
+  // 1. Resolve active academic year
+  let activeYear = null;
+  if (academicYearId) {
+    activeYear = await tx.academicYear.findFirst({
+      where: {
+        id: academicYearId,
+        ...(institutionId && { institutionId }),
+      },
+    });
+  } else {
+    activeYear = await tx.academicYear.findFirst({
+      where: {
+        isCurrent: true,
+        ...(institutionId && { institutionId }),
+      },
+    });
+  }
 
   if (!activeYear) {
     throw new AppError('No active academic year found', 404, 'ACADEMIC_YEAR_NOT_FOUND');
@@ -277,7 +330,7 @@ async function withdrawStudent(tx, {
     },
   });
 
-  // 3. Clear legacy Student.classId
+  // 3. Clear legacy Student.classId and set status INACTIVE
   await tx.student.update({
     where: { id: studentId },
     data: {
@@ -288,7 +341,7 @@ async function withdrawStudent(tx, {
 
   // 4. Audit trail
   await auditService.record(tx, {
-    institutionId: activeYear.institutionId || null,
+    institutionId: activeYear.institutionId,
     userId: actor?.id || null,
     action: 'STUDENT_WITHDRAWN',
     entityType: 'Enrollment',

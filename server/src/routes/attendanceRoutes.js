@@ -1,13 +1,13 @@
 /**
  * Attendance Routes — REST API endpoints for daily attendance, bulk marking,
  * monthly statistics, student history, and reports.
- * Refactored to delegate domain logic to attendanceService and use AppError.
+ * Altus Kairos — Tenant & Relationship Integrity Hardening
  */
 
 const express = require('express');
 const router = express.Router();
 const attendanceService = require('../services/attendanceService');
-const { optionalAuth } = require('../middleware/authMiddleware');
+const AppError = require('../utils/AppError');
 
 const requirePermission = require('../middleware/requirePermission');
 const { requireInstitutionContext } = require('../middleware/institutionContext');
@@ -25,6 +25,7 @@ router.get('/', requirePermission('attendance.view'), async (req, res, next) => 
     const { classId, date } = req.query;
 
     const result = await attendanceService.getDailyAttendance(req.prisma, {
+      institutionId: req.institutionId,
       classId,
       date,
     });
@@ -49,6 +50,7 @@ router.post('/mark', requirePermission('attendance.mark'), async (req, res, next
     const userAgent = req.headers['user-agent'] || null;
 
     const result = await attendanceService.markAttendance(req.prisma, {
+      institutionId: req.institutionId,
       classId,
       date,
       records,
@@ -72,6 +74,7 @@ router.get('/stats', requirePermission('attendance.view'), async (req, res, next
     const { classId, month, year } = req.query;
 
     const result = await attendanceService.getAttendanceStats(req.prisma, {
+      institutionId: req.institutionId,
       classId,
       month,
       year,
@@ -88,12 +91,24 @@ router.get('/stats', requirePermission('attendance.view'), async (req, res, next
 
 /**
  * 4. GET /api/attendance/student/:studentId
- * Get attendance history for a specific student.
+ * Get attendance history for a specific student strictly scoped to institution.
  */
 router.get('/student/:studentId', requirePermission('attendance.view'), async (req, res, next) => {
   try {
     const { studentId } = req.params;
     let { month, year } = req.query;
+
+    // Verify student belongs to this institution
+    const student = await req.prisma.student.findFirst({
+      where: {
+        id: studentId,
+        institutionId: req.institutionId,
+      },
+    });
+
+    if (!student) {
+      throw new AppError('Student not found', 404, 'STUDENT_NOT_FOUND');
+    }
 
     const now = new Date();
     month = month ? parseInt(month, 10) : now.getUTCMonth() + 1;
@@ -117,7 +132,7 @@ router.get('/student/:studentId', requirePermission('attendance.view'), async (r
     });
 
     const stats = { present: 0, absent: 0, late: 0, excused: 0 };
-    records.forEach(r => {
+    records.forEach((r) => {
       if (r.status === 'PRESENT') stats.present++;
       else if (r.status === 'ABSENT') stats.absent++;
       else if (r.status === 'LATE') stats.late++;
@@ -157,6 +172,7 @@ router.get('/report', requirePermission('attendance.view'), async (req, res, nex
     const { classId, dateFrom, dateTo } = req.query;
 
     const report = await attendanceService.getAttendanceReport(req.prisma, {
+      institutionId: req.institutionId,
       classId,
       dateFrom,
       dateTo,

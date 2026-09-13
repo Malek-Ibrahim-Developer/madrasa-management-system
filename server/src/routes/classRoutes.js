@@ -1,5 +1,6 @@
 /**
  * Class Routes — Robust CRUD API for class/course management
+ * Altus Kairos — Tenant & Relationship Integrity Hardening
  */
 
 const express = require('express');
@@ -11,12 +12,23 @@ const requirePermission = require('../middleware/requirePermission');
 const { requireInstitutionContext } = require('../middleware/institutionContext');
 const requireModuleEnabled = require('../middleware/requireModuleEnabled');
 const auditService = require('../services/auditService');
+const {
+  getCurrentAcademicYear,
+  getAcademicYearForInstitution,
+} = require('../services/academicYearService');
 
 router.use(requireInstitutionContext);
 router.use(requireModuleEnabled('coursesEnabled'));
 
-const buildClassWhere = ({ search, status, academicYearId }) => {
-  const where = {};
+/**
+ * Builds where clause strictly scoped to the active institution
+ */
+const buildClassWhere = ({ search, status, academicYearId, institutionId }) => {
+  const where = {
+    academicYear: {
+      institutionId,
+    },
+  };
 
   if (status) {
     where.status = status;
@@ -52,7 +64,7 @@ const buildClassWhere = ({ search, status, academicYearId }) => {
 
 /**
  * GET /api/classes
- * Fetch all classes with pagination, search, status filter, and counts
+ * Fetch all classes for current institution with pagination, search, status filter, and counts
  */
 router.get('/', requirePermission('courses.view'), async (req, res, next) => {
   try {
@@ -62,7 +74,12 @@ router.get('/', requirePermission('courses.view'), async (req, res, next) => {
     const status = typeof req.query.status === 'string' ? req.query.status : '';
     const academicYearId = typeof req.query.academicYearId === 'string' ? req.query.academicYearId : '';
 
-    const where = buildClassWhere({ search, status, academicYearId });
+    const where = buildClassWhere({
+      search,
+      status,
+      academicYearId,
+      institutionId: req.institutionId,
+    });
 
     const [classes, total] = await Promise.all([
       req.prisma.class.findMany({
@@ -89,7 +106,7 @@ router.get('/', requirePermission('courses.view'), async (req, res, next) => {
     ]);
 
     const data = classes.map((cls) => {
-      const mainTeacherRecord = cls.teachers.find(t => t.role === 'Main Teacher') || cls.teachers[0];
+      const mainTeacherRecord = cls.teachers.find((t) => t.role === 'Main Teacher') || cls.teachers[0];
       const assignedTeacherName = mainTeacherRecord?.teacher?.name || cls.teacher || null;
 
       return {
@@ -102,7 +119,7 @@ router.get('/', requirePermission('courses.view'), async (req, res, next) => {
         status: cls.status,
         academicYearId: cls.academicYearId,
         academicYear: cls.academicYear,
-        studentCount: cls._count.enrollments, // Authoritative active enrollment count
+        studentCount: cls._count.enrollments,
         enrollmentCount: cls._count.enrollments,
         teacherCount: cls._count.teachers,
         subjectCount: cls._count.subjects,
@@ -129,12 +146,17 @@ router.get('/', requirePermission('courses.view'), async (req, res, next) => {
 
 /**
  * GET /api/classes/:id
- * Fetch single class details
+ * Fetch single class details ensuring institution scope
  */
 router.get('/:id', requirePermission('courses.view'), async (req, res, next) => {
   try {
-    const classRecord = await req.prisma.class.findUnique({
-      where: { id: req.params.id },
+    const classRecord = await req.prisma.class.findFirst({
+      where: {
+        id: req.params.id,
+        academicYear: {
+          institutionId: req.institutionId,
+        },
+      },
       include: {
         academicYear: true,
         teachers: {
@@ -155,7 +177,7 @@ router.get('/:id', requirePermission('courses.view'), async (req, res, next) => 
       throw new AppError('Class not found', 404, 'CLASS_NOT_FOUND');
     }
 
-    const mainTeacherRecord = classRecord.teachers.find(t => t.role === 'Main Teacher') || classRecord.teachers[0];
+    const mainTeacherRecord = classRecord.teachers.find((t) => t.role === 'Main Teacher') || classRecord.teachers[0];
     const assignedTeacherName = mainTeacherRecord?.teacher?.name || classRecord.teacher || null;
 
     res.json({
@@ -186,7 +208,7 @@ router.get('/:id', requirePermission('courses.view'), async (req, res, next) => 
 
 /**
  * POST /api/classes
- * Create a new class inside a transactional boundary
+ * Create a new class inside a transactional boundary with institution-scoped AcademicYear resolution
  */
 router.post('/', requirePermission('courses.manage'), async (req, res, next) => {
   try {
@@ -199,28 +221,36 @@ router.post('/', requirePermission('courses.manage'), async (req, res, next) => 
 
     let { name, section, code, capacity, teacher, academicYearId } = validation.data;
 
-    // Transactional atomic creation
     const newClass = await req.prisma.$transaction(async (tx) => {
-      if (!academicYearId) {
-        const activeYear = await tx.academicYear.findFirst({ where: { isCurrent: true } });
-        if (!activeYear) {
-          throw new AppError(
-            'An active academic year must be configured before creating a class.',
-            409,
-            'ACTIVE_ACADEMIC_YEAR_REQUIRED'
-          );
-        }
-        academicYearId = activeYear.id;
-      } else {
-        const specifiedYear = await tx.academicYear.findUnique({ where: { id: academicYearId } });
-        if (!specifiedYear) {
-          throw new AppError('Specified academic year not found', 404, 'ACADEMIC_YEAR_NOT_FOUND');
-        }
+      // Resolve AcademicYear strictly for the current institution
+      const academicYear = academicYearId
+        ? await getAcademicYearForInstitution(tx, req.institutionId, academicYearId)
+        : await getCurrentAcademicYear(tx, req.institutionId);
+
+      academicYearId = academicYear.id;
+
+      if (academicYear.status !== 'ACTIVE') {
+        throw new AppError(
+          'Classes can only be created in an active academic year.',
+          409,
+          'ACADEMIC_YEAR_NOT_ACTIVE'
+        );
       }
 
-      const existing = await tx.class.findUnique({ where: { code } });
-      if (existing) {
-        throw new AppError(`Class with code "${code}" already exists`, 409, 'CLASS_CODE_EXISTS');
+      // Check code uniqueness within academic year
+      const duplicate = await tx.class.findFirst({
+        where: {
+          academicYearId,
+          code,
+        },
+      });
+
+      if (duplicate) {
+        throw new AppError(
+          `Class code "${code}" already exists in this academic year`,
+          409,
+          'CLASS_CODE_EXISTS'
+        );
       }
 
       const created = await tx.class.create({
@@ -235,20 +265,45 @@ router.post('/', requirePermission('courses.manage'), async (req, res, next) => 
         },
       });
 
-      // Synchronize Teacher & ClassTeacher model
+      // Synchronize normalized Teacher & ClassTeacher for the institution
       if (teacher && teacher.trim()) {
-        let t = await tx.teacher.findFirst({ where: { name: teacher.trim() } });
-        if (!t) {
-          t = await tx.teacher.create({ data: { name: teacher.trim(), isActive: true } });
+        const teacherName = teacher.trim();
+
+        let teacherRecord = await tx.teacher.findFirst({
+          where: {
+            institutionId: req.institutionId,
+            name: teacherName,
+            isActive: true,
+          },
+        });
+
+        if (!teacherRecord) {
+          teacherRecord = await tx.teacher.create({
+            data: {
+              institutionId: req.institutionId,
+              name: teacherName,
+              isActive: true,
+            },
+          });
         }
+
         await tx.classTeacher.upsert({
-          where: { classId_teacherId: { classId: created.id, teacherId: t.id } },
+          where: {
+            classId_teacherId: {
+              classId: created.id,
+              teacherId: teacherRecord.id,
+            },
+          },
           update: { role: 'Main Teacher' },
-          create: { classId: created.id, teacherId: t.id, role: 'Main Teacher' },
+          create: {
+            classId: created.id,
+            teacherId: teacherRecord.id,
+            role: 'Main Teacher',
+          },
         });
       }
 
-      // Write Audit Log
+      // Audit Log
       await auditService.record(tx, {
         institutionId: req.institutionId,
         action: 'CLASS_CREATED',
@@ -268,7 +323,7 @@ router.post('/', requirePermission('courses.manage'), async (req, res, next) => 
 
 /**
  * PUT /api/classes/:id
- * Update a class inside a transactional boundary
+ * Update a class inside a transactional boundary with institution scope and teacher normalization
  */
 router.put('/:id', requirePermission('courses.manage'), async (req, res, next) => {
   try {
@@ -282,27 +337,40 @@ router.put('/:id', requirePermission('courses.manage'), async (req, res, next) =
     let { name, section, code, capacity, teacher, academicYearId } = validation.data;
 
     const updatedClass = await req.prisma.$transaction(async (tx) => {
-      const existingClass = await tx.class.findUnique({
-        where: { id: req.params.id },
+      const existingClass = await tx.class.findFirst({
+        where: {
+          id: req.params.id,
+          academicYear: {
+            institutionId: req.institutionId,
+          },
+        },
       });
 
       if (!existingClass) {
         throw new AppError('Class not found', 404, 'CLASS_NOT_FOUND');
       }
 
-      if (!academicYearId) {
+      if (academicYearId) {
+        await getAcademicYearForInstitution(tx, req.institutionId, academicYearId);
+      } else {
         academicYearId = existingClass.academicYearId;
       }
 
+      // Check code uniqueness within academic year (excluding current class)
       const duplicate = await tx.class.findFirst({
         where: {
+          academicYearId,
           code,
           NOT: { id: req.params.id },
         },
       });
 
       if (duplicate) {
-        throw new AppError(`Class with code "${code}" already exists`, 409, 'CLASS_CODE_EXISTS');
+        throw new AppError(
+          `Class with code "${code}" already exists in this academic year`,
+          409,
+          'CLASS_CODE_EXISTS'
+        );
       }
 
       const updated = await tx.class.update({
@@ -312,25 +380,58 @@ router.put('/:id', requirePermission('courses.manage'), async (req, res, next) =
           section,
           code,
           capacity,
-          teacher,
+          teacher: teacher || null,
           academicYearId,
         },
       });
 
-      // Synchronize Teacher & ClassTeacher model
+      // Synchronize normalized Main Teacher relationship
       if (teacher && teacher.trim()) {
-        let t = await tx.teacher.findFirst({ where: { name: teacher.trim() } });
-        if (!t) {
-          t = await tx.teacher.create({ data: { name: teacher.trim(), isActive: true } });
+        const teacherName = teacher.trim();
+        let teacherRecord = await tx.teacher.findFirst({
+          where: {
+            institutionId: req.institutionId,
+            name: teacherName,
+            isActive: true,
+          },
+        });
+
+        if (!teacherRecord) {
+          teacherRecord = await tx.teacher.create({
+            data: {
+              institutionId: req.institutionId,
+              name: teacherName,
+              isActive: true,
+            },
+          });
         }
-        await tx.classTeacher.upsert({
-          where: { classId_teacherId: { classId: updated.id, teacherId: t.id } },
-          update: { role: 'Main Teacher' },
-          create: { classId: updated.id, teacherId: t.id, role: 'Main Teacher' },
+
+        // Delete any existing Main Teacher assignment for this class to prevent multiple main teachers
+        await tx.classTeacher.deleteMany({
+          where: {
+            classId: updated.id,
+            role: 'Main Teacher',
+          },
+        });
+
+        await tx.classTeacher.create({
+          data: {
+            classId: updated.id,
+            teacherId: teacherRecord.id,
+            role: 'Main Teacher',
+          },
+        });
+      } else {
+        // Teacher cleared — remove previous Main Teacher assignment
+        await tx.classTeacher.deleteMany({
+          where: {
+            classId: updated.id,
+            role: 'Main Teacher',
+          },
         });
       }
 
-      // Write Audit Log
+      // Audit Log
       await auditService.record(tx, {
         institutionId: req.institutionId,
         action: 'CLASS_UPDATED',
@@ -351,6 +452,7 @@ router.put('/:id', requirePermission('courses.manage'), async (req, res, next) =
 
 /**
  * PATCH /api/classes/:id/status
+ * Update status with institution scope
  */
 router.patch('/:id/status', requirePermission('courses.manage'), async (req, res, next) => {
   try {
@@ -361,8 +463,13 @@ router.patch('/:id/status', requirePermission('courses.manage'), async (req, res
       throw new AppError('Invalid class status', 422, 'INVALID_CLASS_STATUS');
     }
 
-    const existingClass = await req.prisma.class.findUnique({
-      where: { id: req.params.id },
+    const existingClass = await req.prisma.class.findFirst({
+      where: {
+        id: req.params.id,
+        academicYear: {
+          institutionId: req.institutionId,
+        },
+      },
     });
 
     if (!existingClass) {
@@ -385,11 +492,17 @@ router.patch('/:id/status', requirePermission('courses.manage'), async (req, res
 
 /**
  * DELETE /api/classes/:id
+ * Delete or archive class ensuring institution scope
  */
 router.delete('/:id', requirePermission('courses.manage'), async (req, res, next) => {
   try {
-    const existingClass = await req.prisma.class.findUnique({
-      where: { id: req.params.id },
+    const existingClass = await req.prisma.class.findFirst({
+      where: {
+        id: req.params.id,
+        academicYear: {
+          institutionId: req.institutionId,
+        },
+      },
       include: {
         _count: {
           select: {

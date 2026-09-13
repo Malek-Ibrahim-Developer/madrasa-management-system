@@ -209,7 +209,11 @@ const Courses = () => {
       fetchClasses(false);
     } catch (error) {
       console.error('Error saving class:', error);
-      toast.error(error.message || 'Failed to save class');
+      if (error.message?.toLowerCase().includes('academic year')) {
+        toast.error('No active academic year is configured. Configure the current academic year before adding a class.');
+      } else {
+        toast.error(error.message || 'Failed to save class');
+      }
     } finally {
       setIsSubmitting(false);
     }

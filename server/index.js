@@ -19,6 +19,7 @@ const importRoutes = require('./src/routes/importRoutes');
 const attendanceRoutes = require('./src/routes/attendanceRoutes');
 const authRoutes = require('./src/routes/authRoutes');
 const institutionRoutes = require('./src/routes/institutionRoutes');
+const academicYearRoutes = require('./src/routes/academicYearRoutes');
 const devContext = require('./src/middleware/devContext');
 
 // ── Initialize ──
@@ -44,6 +45,7 @@ app.use(devContext);
 
 // ── API Routes ──
 app.use('/api/institution', institutionRoutes);
+app.use('/api/academic-years', academicYearRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
 app.use('/api/classes', classRoutes);

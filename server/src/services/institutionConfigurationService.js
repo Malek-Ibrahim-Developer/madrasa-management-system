@@ -18,6 +18,7 @@ const CONFIG_KEYS = [
   'libraryEnabled',
   'hostelEnabled',
   'kitchenEnabled',
+  'resultsEnabled',
   'requireAcademicYear',
   'allowMultipleSections',
   'allowAttendanceEdit',

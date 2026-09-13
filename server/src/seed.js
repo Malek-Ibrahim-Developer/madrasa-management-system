@@ -1,6 +1,6 @@
 /**
  * Production-Grade Seed Script — Populates the database in strict relational dependency order:
- * Institution -> Configuration -> AcademicYear -> Roles & Permissions -> Users -> Classes -> Students -> Enrollments -> Attendance
+ * Institution -> Configuration -> AcademicYear -> Roles & Permissions -> Users -> Teachers -> Classes -> ClassTeachers -> Students -> Enrollments
  * 
  * Run with: npm run db:seed
  */
@@ -9,6 +9,7 @@ require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 const { hashPassword } = require('./utils/password');
 const { startOfDay } = require('./utils/enrollmentRules');
+const { PERMISSIONS } = require('./config/permissions');
 
 const prisma = new PrismaClient();
 
@@ -58,50 +59,41 @@ async function seed() {
   });
   console.log('    ✓ Configuration saved');
 
-  // 3. Academic Year
+  // 3. Academic Year — Scoped by composite key [institutionId, name]
   console.log('  📅 Creating/updating Active Academic Year...');
   const academicYear = await prisma.academicYear.upsert({
-    where: { name: '2025-2026' },
-    update: { isCurrent: true, institutionId: institution.id },
+    where: {
+      institutionId_name: {
+        institutionId: institution.id,
+        name: '2025-2026',
+      },
+    },
+    update: {
+      isCurrent: true,
+      status: 'ACTIVE',
+      startDate: new Date('2025-06-01T00:00:00.000Z'),
+      endDate: new Date('2026-05-31T23:59:59.999Z'),
+    },
     create: {
+      institutionId: institution.id,
       name: '2025-2026',
       startDate: new Date('2025-06-01T00:00:00.000Z'),
       endDate: new Date('2026-05-31T23:59:59.999Z'),
       isCurrent: true,
       status: 'ACTIVE',
-      institutionId: institution.id,
     },
   });
   console.log(`    ✓ Academic Year: ${academicYear.name} (isCurrent: ${academicYear.isCurrent})`);
 
-  // 4. Permissions
+  // 4. Permissions — Canonical permissions from permissions.js
   console.log('  🛡️ Seeding Granular Permissions...');
-  const permissionCodes = [
-    { code: 'students.view', description: 'View student profiles' },
-    { code: 'students.create', description: 'Create new student' },
-    { code: 'students.update', description: 'Update student record' },
-    { code: 'students.archive', description: 'Archive student' },
-    { code: 'classes.view', description: 'View classes' },
-    { code: 'classes.create', description: 'Create class' },
-    { code: 'classes.update', description: 'Update class' },
-    { code: 'classes.archive', description: 'Archive class' },
-    { code: 'enrollment.view', description: 'View enrollments' },
-    { code: 'enrollment.create', description: 'Enroll student' },
-    { code: 'enrollment.transfer', description: 'Transfer student' },
-    { code: 'enrollment.withdraw', description: 'Withdraw student' },
-    { code: 'attendance.view', description: 'View attendance' },
-    { code: 'attendance.mark', description: 'Mark daily attendance' },
-    { code: 'attendance.edit', description: 'Edit attendance' },
-    { code: 'attendance.clear', description: 'Clear attendance' },
-    { code: 'reports.view', description: 'View reports' },
-    { code: 'configuration.view', description: 'View configuration' },
-    { code: 'configuration.update', description: 'Update configuration' },
-    { code: 'users.view', description: 'View system users' },
-    { code: 'users.manage', description: 'Manage system users' },
-  ];
+  const permissionEntries = Object.values(PERMISSIONS).map((code) => ({
+    code,
+    description: `Permission for ${code.replace('.', ' ')}`,
+  }));
 
   const permissions = [];
-  for (const p of permissionCodes) {
+  for (const p of permissionEntries) {
     const createdPerm = await prisma.permission.upsert({
       where: { code: p.code },
       update: {},
@@ -150,8 +142,8 @@ async function seed() {
   });
   console.log(`    ✓ Admin user: ${adminUser.email} (Password: admin123)`);
 
-  // 7. Classes
-  console.log('  📚 Seeding Classes...');
+  // 7. Classes, Teachers & ClassTeacher Normalization
+  console.log('  📚 Seeding Classes & Normalized Teachers...');
   const sampleClasses = [
     { name: 'Class 8', code: 'CLS-08A', section: 'A', teacher: 'Maulana Zubair', capacity: 40 },
     { name: 'Class 9', code: 'CLS-09A', section: 'A', teacher: 'Maulana Tariq', capacity: 40 },
@@ -162,17 +154,56 @@ async function seed() {
 
   const createdClasses = [];
   for (const cls of sampleClasses) {
+    let teacherRecord = null;
+    if (cls.teacher) {
+      teacherRecord = await prisma.teacher.findFirst({
+        where: { institutionId: institution.id, name: cls.teacher },
+      });
+      if (!teacherRecord) {
+        teacherRecord = await prisma.teacher.create({
+          data: {
+            institutionId: institution.id,
+            name: cls.teacher,
+            isActive: true,
+          },
+        });
+      }
+    }
+
     const created = await prisma.class.upsert({
-      where: { code: cls.code },
-      update: { academicYearId: academicYear.id },
+      where: {
+        academicYearId_code: {
+          academicYearId: academicYear.id,
+          code: cls.code,
+        },
+      },
+      update: { academicYearId: academicYear.id, teacher: cls.teacher },
       create: {
         ...cls,
         academicYearId: academicYear.id,
         status: 'ACTIVE',
       },
     });
+
+    if (teacherRecord) {
+      await prisma.classTeacher.upsert({
+        where: {
+          classId_teacherId: {
+            classId: created.id,
+            teacherId: teacherRecord.id,
+          },
+        },
+        update: { role: 'Main Teacher' },
+        create: {
+          classId: created.id,
+          teacherId: teacherRecord.id,
+          role: 'Main Teacher',
+        },
+      });
+    }
+
     createdClasses.push(created);
-    console.log(`    ✓ ${created.name} (${created.code})`);
+    console.log(`    ✓ ${created.name} (${created.code}) — Teacher: ${cls.teacher}`);
   }
 
   // 8. Students & Authoritative Enrollments
@@ -194,10 +225,16 @@ async function seed() {
     const assignedClass = createdClasses[i % createdClasses.length];
 
     const student = await prisma.student.upsert({
-      where: { admissionNo: sampleStudents[i].admissionNo },
+      where: {
+        institutionId_admissionNo: {
+          institutionId: institution.id,
+          admissionNo: sampleStudents[i].admissionNo,
+        },
+      },
       update: { classId: assignedClass.id },
       create: {
         ...sampleStudents[i],
+        institutionId: institution.id,
         classId: assignedClass.id,
         admissionDate: enrollmentStartDate,
         status: 'ACTIVE',
