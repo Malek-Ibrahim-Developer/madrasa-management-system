@@ -1,15 +1,36 @@
 /**
  * Server-side validation rules for Class payload data
  */
-const validateClassPayload = (body) => {
+const validateClassPayload = (body = {}) => {
   const errors = {};
+  const safeBody = body && typeof body === 'object' ? body : {};
 
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const section = typeof body.section === 'string' ? body.section.trim() : '';
-  const code = typeof body.code === 'string' ? body.code.trim() : '';
-  const capacity = Number(body.capacity);
-  const teacher = typeof body.teacher === 'string' ? body.teacher.trim() : '';
-  const academicYearId = typeof body.academicYearId === 'string' ? body.academicYearId.trim() : '';
+  const name =
+    typeof safeBody.name === 'string'
+      ? safeBody.name.trim()
+      : '';
+
+  const section =
+    typeof safeBody.section === 'string'
+      ? safeBody.section.trim()
+      : '';
+
+  const code =
+    typeof safeBody.code === 'string'
+      ? safeBody.code.trim()
+      : '';
+
+  const capacity = Number(safeBody.capacity);
+
+  const teacher =
+    typeof safeBody.teacher === 'string'
+      ? safeBody.teacher.trim()
+      : '';
+
+  const academicYearId =
+    typeof safeBody.academicYearId === 'string'
+      ? safeBody.academicYearId.trim()
+      : '';
 
   if (!name) {
     errors.name = 'Class name is required';
@@ -36,7 +57,10 @@ const validateClassPayload = (body) => {
       name,
       section: section || null,
       code,
-      capacity: Number.isInteger(capacity) && capacity > 0 ? capacity : 40,
+      capacity:
+        Number.isInteger(capacity) && capacity > 0
+          ? capacity
+          : 40,
       teacher: teacher || null,
       academicYearId: academicYearId || null,
     },

@@ -32,7 +32,9 @@ app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({
+  limit: '1mb',
+}));
 
 // ── Make prisma available to routes ──
 app.use((req, res, next) => {
@@ -42,6 +44,14 @@ app.use((req, res, next) => {
 
 // ── Dev Context Middleware ──
 app.use(devContext);
+
+// ── Request Logger ──
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    console.log(`📡 [${req.method}] ${req.path}`, (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') ? JSON.stringify(req.body) : '');
+  }
+  next();
+});
 
 // ── API Routes ──
 app.use('/api/institution', institutionRoutes);

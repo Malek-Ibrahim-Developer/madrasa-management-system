@@ -212,6 +212,21 @@ router.get('/:id', requirePermission('courses.view'), async (req, res, next) => 
  */
 router.post('/', requirePermission('courses.manage'), async (req, res, next) => {
   try {
+    const contentLength = req.headers['content-length'];
+    if (
+      !req.body ||
+      typeof req.body !== 'object' ||
+      Array.isArray(req.body) ||
+      contentLength === '0' ||
+      !contentLength
+    ) {
+      throw new AppError(
+        'Request body must be a valid JSON object',
+        400,
+        'INVALID_REQUEST_BODY'
+      );
+    }
+
     const validation = validateClassPayload(req.body);
 
     if (!validation.valid) {
@@ -327,6 +342,21 @@ router.post('/', requirePermission('courses.manage'), async (req, res, next) => 
  */
 router.put('/:id', requirePermission('courses.manage'), async (req, res, next) => {
   try {
+    const contentLength = req.headers['content-length'];
+    if (
+      !req.body ||
+      typeof req.body !== 'object' ||
+      Array.isArray(req.body) ||
+      contentLength === '0' ||
+      !contentLength
+    ) {
+      throw new AppError(
+        'Request body must be a valid JSON object',
+        400,
+        'INVALID_REQUEST_BODY'
+      );
+    }
+
     const validation = validateClassPayload(req.body);
 
     if (!validation.valid) {

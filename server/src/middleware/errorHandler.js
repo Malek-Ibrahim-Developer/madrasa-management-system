@@ -2,11 +2,13 @@
  * Centralized Error Handling Middleware
  */
 const errorHandler = (error, req, res, next) => {
-  console.error('[ERROR]', {
+  console.error('🚨 [ERROR OCCURRED IN API]:', {
     message: error.message,
     code: error.code,
+    statusCode: error.statusCode,
     path: req.path,
     method: req.method,
+    stack: error.stack,
   });
 
   const statusCode = error.statusCode || 500;

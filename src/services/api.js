@@ -12,21 +12,28 @@ const API_BASE = window.location.port === '5173'
  */
 async function apiCall(endpoint, options = {}) {
   try {
+    const method = options.method || 'GET';
+    const headers = {
+      ...(options.headers || {}),
+    };
+
+    // Add JSON content type when body is present
+    if (options.body !== undefined && options.body !== null) {
+      headers['Content-Type'] = 'application/json';
+    }
+
     // Add dev role header for backend authorization
     const devRole = localStorage.getItem('altus-kairos-dev-role') || 'ADMIN';
     if (devRole) {
-      options.headers = {
-        ...options.headers,
-        'X-Dev-Role': devRole,
-      };
+      headers['X-Dev-Role'] = devRole;
     }
 
+    console.log(`📡 [${method}] ${endpoint}`, options.body);
+
     const response = await fetch(`${API_BASE}${endpoint}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
       ...options,
+      method,
+      headers,
     });
 
     // Handle file downloads
