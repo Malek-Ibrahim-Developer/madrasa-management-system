@@ -1,39 +1,55 @@
 /**
- * Authorization Middleware — Enforces required RBAC permission on route handlers
+ * Authorization Middleware — Phase 2A
+ * 
+ * Enforces RBAC permission checks on route handlers.
+ * 
+ * In development: Uses req.devRole with centralized ROLE_PERMISSIONS map
+ * In production (future): Uses req.user.role with database permissions
  */
 
 const AppError = require('../utils/AppError');
-const permissionService = require('../services/permissionService');
+const { roleHasPermission } = require('../config/permissions');
 
 /**
- * Route middleware ensuring req.user holds the required permission code
- * @param {string} permissionCode 
+ * Route middleware ensuring the current identity has the required permission
+ * @param {string} permissionCode - e.g. 'students.view', 'settings.manage'
  */
 function requirePermission(permissionCode) {
-  return async (req, res, next) => {
-    try {
-      if (!req.user) {
-        throw new AppError('Authentication is required.', 401, 'AUTHENTICATION_REQUIRED');
+  return (req, res, next) => {
+    // Future production path: check req.user permissions from database
+    if (req.user) {
+      const userPerms = req.user.permissions || [];
+      if (userPerms.includes('*') || userPerms.includes(permissionCode)) {
+        return next();
       }
-
-      const allowed = await permissionService.userHasPermission(
-        req.prisma,
-        req.user,
-        permissionCode
-      );
-
-      if (!allowed) {
-        throw new AppError(
-          `You do not have permission to perform this action (${permissionCode}).`,
-          403,
-          'FORBIDDEN'
-        );
+      if (req.user.role && req.user.role.name === 'Admin') {
+        return next();
       }
-
-      next();
-    } catch (error) {
-      next(error);
+      return next(new AppError(
+        'You do not have permission to perform this action',
+        403,
+        'FORBIDDEN'
+      ));
     }
+
+    // Development path: check req.devRole against centralized permission map
+    if (req.devRole) {
+      if (roleHasPermission(req.devRole, permissionCode)) {
+        return next();
+      }
+      return next(new AppError(
+        'You do not have permission to perform this action',
+        403,
+        'FORBIDDEN'
+      ));
+    }
+
+    // No identity at all
+    return next(new AppError(
+      'Authentication required',
+      401,
+      'AUTH_REQUIRED'
+    ));
   };
 }
 

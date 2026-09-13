@@ -8,8 +8,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
-import { DevRoleProvider } from './context/DevRoleContext';
-import { InstitutionProvider } from './context/InstitutionContext';
+import { DevRoleProvider } from './contexts/DevRoleContext';
+import { InstitutionProvider } from './contexts/InstitutionContext';
+import ProtectedRoute from './components/common/ProtectedRoute';
 
 import MainLayout from './components/layout/MainLayout';
 import Dashboard from './pages/Dashboard';
@@ -64,22 +65,74 @@ export default function App() {
             <Route element={<MainLayout />}>
               <Route path="/" element={<Dashboard />} />
 
-              {/* Active Modules */}
-              <Route path="/students" element={<Students />} />
-              <Route path="/students/custom-fields" element={<CustomFieldsManager />} />
-              <Route path="/students/:id" element={<StudentProfile />} />
-              <Route path="/courses" element={<Courses />} />
-              <Route path="/attendance" element={<Attendance />} />
-              <Route path="/settings" element={<InstitutionSettings />} />
+              {/* Active Modules — permission + module guarded */}
+              <Route path="/students" element={
+                <ProtectedRoute permission="students.view" module="studentsEnabled">
+                  <Students />
+                </ProtectedRoute>
+              } />
+              <Route path="/students/custom-fields" element={
+                <ProtectedRoute permission="students.edit" module="studentsEnabled">
+                  <CustomFieldsManager />
+                </ProtectedRoute>
+              } />
+              <Route path="/students/:id" element={
+                <ProtectedRoute permission="students.view" module="studentsEnabled">
+                  <StudentProfile />
+                </ProtectedRoute>
+              } />
+              <Route path="/courses" element={
+                <ProtectedRoute permission="courses.view" module="coursesEnabled">
+                  <Courses />
+                </ProtectedRoute>
+              } />
+              <Route path="/attendance" element={
+                <ProtectedRoute permission="attendance.view" module="attendanceEnabled">
+                  <Attendance />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings" element={
+                <ProtectedRoute permission="settings.view">
+                  <InstitutionSettings />
+                </ProtectedRoute>
+              } />
 
-              {/* Placeholder routes for future modules */}
-              <Route path="/exams" element={<ComingSoon title="Exams & Results" />} />
-              <Route path="/accounts" element={<ComingSoon title="Accounts" />} />
-              <Route path="/fees" element={<ComingSoon title="Fees & Stipends" />} />
-              <Route path="/salary" element={<ComingSoon title="Salary Management" />} />
-              <Route path="/library" element={<ComingSoon title="Library" />} />
-              <Route path="/kitchen" element={<ComingSoon title="Kitchen" />} />
-              <Route path="/hostel" element={<ComingSoon title="Hostel" />} />
+              {/* Placeholder routes — permission + module guarded */}
+              <Route path="/exams" element={
+                <ProtectedRoute permission="exams.view" module="examsEnabled">
+                  <ComingSoon title="Exams & Results" />
+                </ProtectedRoute>
+              } />
+              <Route path="/accounts" element={
+                <ProtectedRoute permission="accounts.view" module="accountsEnabled">
+                  <ComingSoon title="Accounts" />
+                </ProtectedRoute>
+              } />
+              <Route path="/fees" element={
+                <ProtectedRoute permission="fees.view" module="feesEnabled">
+                  <ComingSoon title="Fees & Stipends" />
+                </ProtectedRoute>
+              } />
+              <Route path="/salary" element={
+                <ProtectedRoute permission="salary.view" module="salaryEnabled">
+                  <ComingSoon title="Salary Management" />
+                </ProtectedRoute>
+              } />
+              <Route path="/library" element={
+                <ProtectedRoute permission="library.view" module="libraryEnabled">
+                  <ComingSoon title="Library" />
+                </ProtectedRoute>
+              } />
+              <Route path="/kitchen" element={
+                <ProtectedRoute permission="kitchen.view" module="kitchenEnabled">
+                  <ComingSoon title="Kitchen" />
+                </ProtectedRoute>
+              } />
+              <Route path="/hostel" element={
+                <ProtectedRoute permission="hostel.view" module="hostelEnabled">
+                  <ComingSoon title="Hostel" />
+                </ProtectedRoute>
+              } />
             </Route>
 
             {/* Catch-all */}

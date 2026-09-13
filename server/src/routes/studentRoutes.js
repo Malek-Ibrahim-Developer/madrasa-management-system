@@ -7,6 +7,14 @@ const express = require('express');
 const router = express.Router();
 const AppError = require('../utils/AppError');
 
+const requirePermission = require('../middleware/requirePermission');
+const { requireInstitutionContext } = require('../middleware/institutionContext');
+const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+
+// All student routes require institution context and students module
+router.use(requireInstitutionContext);
+router.use(requireModuleEnabled('studentsEnabled'));
+
 /**
  * Helper to resolve active academic year without silent fallbacks
  */
@@ -100,7 +108,7 @@ async function getDeterministicStudent(prisma, studentId) {
  * GET /api/students
  * Fetch students with search, advanced filters, sorting, pagination using Authoritative Enrollment
  */
-router.get('/', async (req, res, next) => {
+router.get('/', requirePermission('students.view'), async (req, res, next) => {
   try {
     const {
       search, classId, status, gender, bloodGroup,
@@ -356,7 +364,7 @@ router.get('/', async (req, res, next) => {
  * GET /api/students/:id
  * Fetch single student with deterministic active enrollment mapping + custom fields
  */
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', requirePermission('students.view'), async (req, res, next) => {
   try {
     const student = await getDeterministicStudent(req.prisma, req.params.id);
 
@@ -374,7 +382,7 @@ router.get('/:id', async (req, res, next) => {
  * POST /api/students
  * Transactional creation + capacity validation + active enrollment creation
  */
-router.post('/', async (req, res, next) => {
+router.post('/', requirePermission('students.create'), async (req, res, next) => {
   try {
     const {
       admissionNo, firstName, lastName, fatherName, motherName,
@@ -470,7 +478,7 @@ router.post('/', async (req, res, next) => {
  * PUT /api/students/:id
  * Transactional update with explicit classId handling (undefined vs null vs "some-id")
  */
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', requirePermission('students.edit'), async (req, res, next) => {
   try {
     const {
       admissionNo, firstName, lastName, fatherName, motherName,
@@ -645,7 +653,7 @@ router.put('/:id', async (req, res, next) => {
 /**
  * DELETE /api/students/:id
  */
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requirePermission('students.delete'), async (req, res, next) => {
   try {
     const existing = await req.prisma.student.findUnique({ where: { id: req.params.id } });
     if (!existing) {

@@ -19,8 +19,8 @@ import {
   MdClose,
   MdTune,
 } from 'react-icons/md';
-import { useDevRole } from '../../context/DevRoleContext';
-import { useInstitution } from '../../context/InstitutionContext';
+import { useDevRole } from '../../contexts/DevRoleContext';
+import { useInstitution } from '../../contexts/InstitutionContext';
 import { PERMISSIONS } from '../../config/permissions';
 
 const NAV_SECTIONS = [

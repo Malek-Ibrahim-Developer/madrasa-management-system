@@ -20,7 +20,7 @@ import {
   MdAccessTime,
 } from 'react-icons/md';
 
-import { useInstitution } from '../../context/InstitutionContext';
+import { useInstitution } from '../../contexts/InstitutionContext';
 import {
   getInstitutionProfile,
   updateInstitutionProfile,

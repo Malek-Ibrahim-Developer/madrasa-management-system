@@ -12,6 +12,15 @@ const API_BASE = window.location.port === '5173'
  */
 async function apiCall(endpoint, options = {}) {
   try {
+    // Add dev role header for backend authorization
+    const devRole = localStorage.getItem('altus-kairos-dev-role') || 'ADMIN';
+    if (devRole) {
+      options.headers = {
+        ...options.headers,
+        'X-Dev-Role': devRole,
+      };
+    }
+
     const response = await fetch(`${API_BASE}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',

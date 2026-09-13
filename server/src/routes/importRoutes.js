@@ -4,12 +4,19 @@ const multer = require('multer');
 const exceljs = require('exceljs');
 const { parse } = require('csv-parse/sync');
 
+const requirePermission = require('../middleware/requirePermission');
+const { requireInstitutionContext } = require('../middleware/institutionContext');
+const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+
+router.use(requireInstitutionContext);
+router.use(requireModuleEnabled('studentsEnabled'));
+
 const upload = multer({ 
   storage: multer.memoryStorage(), 
   limits: { fileSize: 5 * 1024 * 1024 } 
 });
 
-router.get('/template', async (req, res) => {
+router.get('/template', requirePermission('students.view'), async (req, res) => {
   try {
     const workbook = new exceljs.Workbook();
     
@@ -90,7 +97,7 @@ router.get('/template', async (req, res) => {
   }
 });
 
-router.post('/students/validate', upload.single('file'), async (req, res) => {
+router.post('/students/validate', requirePermission('students.create'), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No file uploaded' });
@@ -204,7 +211,7 @@ router.post('/students/validate', upload.single('file'), async (req, res) => {
   }
 });
 
-router.post('/students/execute', async (req, res) => {
+router.post('/students/execute', requirePermission('students.create'), async (req, res) => {
   try {
     const { rows } = req.body;
     if (!rows || !Array.isArray(rows)) {

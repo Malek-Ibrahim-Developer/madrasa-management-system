@@ -3,6 +3,13 @@ const router = express.Router();
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 
+const requirePermission = require('../middleware/requirePermission');
+const { requireInstitutionContext } = require('../middleware/institutionContext');
+const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+
+router.use(requireInstitutionContext);
+router.use(requireModuleEnabled('studentsEnabled'));
+
 // Helper to build where clause based on query params using Authoritative Enrollment
 const buildWhereClause = (query) => {
   const { search, classId, status, gender, bloodGroup, dateFrom, dateTo } = query;
@@ -62,7 +69,7 @@ const formatDate = (date) => {
 };
 
 // GET /api/export/students/excel
-router.get('/students/excel', async (req, res) => {
+router.get('/students/excel', requirePermission('students.view'), async (req, res) => {
   try {
     const where = buildWhereClause(req.query);
 
@@ -214,7 +221,7 @@ router.get('/students/excel', async (req, res) => {
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
 // GET /api/export/students/pdf
-router.get('/students/pdf', async (req, res) => {
+router.get('/students/pdf', requirePermission('students.view'), async (req, res) => {
   try {
     const where = buildWhereClause(req.query);
 

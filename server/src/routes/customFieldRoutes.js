@@ -5,6 +5,13 @@
 const express = require('express');
 const router = express.Router();
 
+const requirePermission = require('../middleware/requirePermission');
+const { requireInstitutionContext } = require('../middleware/institutionContext');
+const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+
+router.use(requireInstitutionContext);
+router.use(requireModuleEnabled('studentsEnabled'));
+
 /**
  * Helper: Generate a URL-safe slug from a field name
  * "Blood Group" → "blood_group"
@@ -21,7 +28,7 @@ function generateFieldKey(name) {
  * GET /api/custom-fields
  * List all custom field definitions (optionally filter by active only)
  */
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('students.view'), async (req, res) => {
   try {
     const { activeOnly } = req.query;
 
@@ -46,7 +53,7 @@ router.get('/', async (req, res) => {
  * POST /api/custom-fields
  * Create a new custom field definition
  */
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('students.edit'), async (req, res) => {
   try {
     const { name, fieldType, options, placeholder, isRequired, section } = req.body;
 
@@ -110,7 +117,7 @@ router.post('/', async (req, res) => {
  * PUT /api/custom-fields/:id
  * Update a custom field definition
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('students.edit'), async (req, res) => {
   try {
     const { name, fieldType, options, placeholder, isRequired, isActive, section } = req.body;
 
@@ -145,7 +152,7 @@ router.put('/:id', async (req, res) => {
  * PUT /api/custom-fields/reorder
  * Reorder fields by providing an array of { id, sortOrder }
  */
-router.put('/reorder/batch', async (req, res) => {
+router.put('/reorder/batch', requirePermission('students.edit'), async (req, res) => {
   try {
     const { items } = req.body; // [{ id: "...", sortOrder: 0 }, ...]
 
@@ -177,7 +184,7 @@ router.put('/reorder/batch', async (req, res) => {
  * DELETE /api/custom-fields/:id
  * Delete a custom field and all its values
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('students.delete'), async (req, res) => {
   try {
     const existing = await req.prisma.customField.findUnique({
       where: { id: req.params.id },

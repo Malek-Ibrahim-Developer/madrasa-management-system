@@ -34,6 +34,9 @@ model Institution {
   users          User[]
   roles          Role[]
   auditLogs      AuditLog[]
+  customFields   CustomField[]
+  teachers       Teacher[]
+  subjects       Subject[]
 
   @@map("institutions")
 }
@@ -87,20 +90,21 @@ enum ClassStatus {
 /// Academic Year session (e.g. 2025-2026)
 model AcademicYear {
   id            String   @id @default(cuid())
-  institutionId String?
-  name          String   @unique // e.g. "2025-2026"
+  institutionId String
+  name          String   // e.g. "2025-2026"
   startDate     DateTime
   endDate       DateTime
   isCurrent     Boolean  @default(false)
   status        String   @default("ACTIVE")
 
-  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   classes     Class[]
   enrollments Enrollment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([institutionId, name])
   @@index([isCurrent])
   @@index([institutionId, status])
   @@map("academic_years")
@@ -108,17 +112,20 @@ model AcademicYear {
 
 /// Teacher / Staff member
 model Teacher {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?  @unique
-  phone     String?
-  isActive  Boolean  @default(true)
+  id            String   @id @default(cuid())
+  institutionId String?
+  name          String
+  email         String?  @unique
+  phone         String?
+  isActive      Boolean  @default(true)
 
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   classes   ClassTeacher[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([institutionId])
   @@map("teachers")
 }
 
@@ -175,17 +182,20 @@ model ClassTeacher {
 
 /// Subject definition
 model Subject {
-  id          String  @id @default(cuid())
-  name        String
-  code        String  @unique
-  description String?
-  isActive    Boolean @default(true)
+  id            String  @id @default(cuid())
+  institutionId String?
+  name          String
+  code          String  @unique
+  description   String?
+  isActive      Boolean @default(true)
 
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   classes ClassSubject[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([institutionId])
   @@index([isActive])
   @@map("subjects")
 }
@@ -446,21 +456,24 @@ model Result {
 }
 
 model CustomField {
-  id          String    @id @default(cuid())
-  name        String
-  fieldKey    String    @unique
-  fieldType   FieldType
-  options     String?
-  placeholder String?
-  isRequired  Boolean   @default(false)
-  isActive    Boolean   @default(true)
-  sortOrder   Int       @default(0)
-  section     String    @default("custom")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  institutionId String
+  name          String
+  fieldKey      String
+  fieldType     FieldType
+  options       String?
+  placeholder   String?
+  isRequired    Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  sortOrder     Int       @default(0)
+  section       String    @default("custom")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   values      CustomFieldValue[]
 
+  @@unique([institutionId, fieldKey])
   @@map("custom_fields")
 }
 

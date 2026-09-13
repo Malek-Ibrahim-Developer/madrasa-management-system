@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { MdAdminPanelSettings, MdExpandMore, MdCheck } from 'react-icons/md';
-import { useDevRole } from '../../context/DevRoleContext';
+import { useDevRole } from '../../contexts/DevRoleContext';
 import { DEV_ROLES } from '../../config/permissions';
 
 const ROLE_LABELS = {

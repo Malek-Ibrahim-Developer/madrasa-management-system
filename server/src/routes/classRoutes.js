@@ -7,6 +7,14 @@ const router = express.Router();
 const AppError = require('../utils/AppError');
 const { validateClassPayload } = require('../validators/classValidator');
 
+const requirePermission = require('../middleware/requirePermission');
+const { requireInstitutionContext } = require('../middleware/institutionContext');
+const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+const auditService = require('../services/auditService');
+
+router.use(requireInstitutionContext);
+router.use(requireModuleEnabled('coursesEnabled'));
+
 const buildClassWhere = ({ search, status, academicYearId }) => {
   const where = {};
 
@@ -46,7 +54,7 @@ const buildClassWhere = ({ search, status, academicYearId }) => {
  * GET /api/classes
  * Fetch all classes with pagination, search, status filter, and counts
  */
-router.get('/', async (req, res, next) => {
+router.get('/', requirePermission('courses.view'), async (req, res, next) => {
   try {
     const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
@@ -123,7 +131,7 @@ router.get('/', async (req, res, next) => {
  * GET /api/classes/:id
  * Fetch single class details
  */
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', requirePermission('courses.view'), async (req, res, next) => {
   try {
     const classRecord = await req.prisma.class.findUnique({
       where: { id: req.params.id },
@@ -180,7 +188,7 @@ router.get('/:id', async (req, res, next) => {
  * POST /api/classes
  * Create a new class inside a transactional boundary
  */
-router.post('/', async (req, res, next) => {
+router.post('/', requirePermission('courses.manage'), async (req, res, next) => {
   try {
     const validation = validateClassPayload(req.body);
 
@@ -241,13 +249,12 @@ router.post('/', async (req, res, next) => {
       }
 
       // Write Audit Log
-      await tx.auditLog.create({
-        data: {
-          action: 'CREATE',
-          entity: 'Class',
-          entityId: created.id,
-          newValue: created,
-        },
+      await auditService.record(tx, {
+        institutionId: req.institutionId,
+        action: 'CLASS_CREATED',
+        entityType: 'Class',
+        entityId: created.id,
+        afterData: created,
       });
 
       return created;
@@ -263,7 +270,7 @@ router.post('/', async (req, res, next) => {
  * PUT /api/classes/:id
  * Update a class inside a transactional boundary
  */
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', requirePermission('courses.manage'), async (req, res, next) => {
   try {
     const validation = validateClassPayload(req.body);
 
@@ -324,14 +331,13 @@ router.put('/:id', async (req, res, next) => {
       }
 
       // Write Audit Log
-      await tx.auditLog.create({
-        data: {
-          action: 'UPDATE',
-          entity: 'Class',
-          entityId: updated.id,
-          oldValue: existingClass,
-          newValue: updated,
-        },
+      await auditService.record(tx, {
+        institutionId: req.institutionId,
+        action: 'CLASS_UPDATED',
+        entityType: 'Class',
+        entityId: updated.id,
+        beforeData: existingClass,
+        afterData: updated,
       });
 
       return updated;
@@ -346,7 +352,7 @@ router.put('/:id', async (req, res, next) => {
 /**
  * PATCH /api/classes/:id/status
  */
-router.patch('/:id/status', async (req, res, next) => {
+router.patch('/:id/status', requirePermission('courses.manage'), async (req, res, next) => {
   try {
     const allowedStatuses = ['DRAFT', 'ACTIVE', 'CLOSED', 'ARCHIVED'];
     const status = typeof req.body.status === 'string' ? req.body.status : '';
@@ -380,7 +386,7 @@ router.patch('/:id/status', async (req, res, next) => {
 /**
  * DELETE /api/classes/:id
  */
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requirePermission('courses.manage'), async (req, res, next) => {
   try {
     const existingClass = await req.prisma.class.findUnique({
       where: { id: req.params.id },

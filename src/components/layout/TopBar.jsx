@@ -8,7 +8,7 @@ import {
   MdMenu,
 } from 'react-icons/md';
 import DevRoleSwitcher from './DevRoleSwitcher';
-import { useDevRole } from '../../context/DevRoleContext';
+import { useDevRole } from '../../contexts/DevRoleContext';
 
 // Temporary mock user profile — auth will be implemented later
 const mockUser = {

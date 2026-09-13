@@ -1,0 +1,100 @@
+/**
+ * Backend Permission Definitions — Mirrors frontend src/config/permissions.js
+ * This is the SERVER-SIDE source of truth for RBAC.
+ */
+
+const PERMISSIONS = {
+  DASHBOARD_VIEW: 'dashboard.view',
+  STUDENTS_VIEW: 'students.view',
+  STUDENTS_CREATE: 'students.create',
+  STUDENTS_EDIT: 'students.edit',
+  STUDENTS_DELETE: 'students.delete',
+  COURSES_VIEW: 'courses.view',
+  COURSES_MANAGE: 'courses.manage',
+  ATTENDANCE_VIEW: 'attendance.view',
+  ATTENDANCE_MARK: 'attendance.mark',
+  ATTENDANCE_EDIT: 'attendance.edit',
+  EXAMS_VIEW: 'exams.view',
+  EXAMS_MANAGE: 'exams.manage',
+  FEES_VIEW: 'fees.view',
+  FEES_MANAGE: 'fees.manage',
+  ACCOUNTS_VIEW: 'accounts.view',
+  ACCOUNTS_MANAGE: 'accounts.manage',
+  SALARY_VIEW: 'salary.view',
+  SALARY_MANAGE: 'salary.manage',
+  LIBRARY_VIEW: 'library.view',
+  LIBRARY_MANAGE: 'library.manage',
+  HOSTEL_VIEW: 'hostel.view',
+  HOSTEL_MANAGE: 'hostel.manage',
+  KITCHEN_VIEW: 'kitchen.view',
+  KITCHEN_MANAGE: 'kitchen.manage',
+  SETTINGS_VIEW: 'settings.view',
+  SETTINGS_MANAGE: 'settings.manage',
+};
+
+const DEV_ROLES = {
+  ADMIN: 'ADMIN',
+  TEACHER: 'TEACHER',
+  ACCOUNTANT: 'ACCOUNTANT',
+  LIBRARIAN: 'LIBRARIAN',
+  HOSTEL_WARDEN: 'HOSTEL_WARDEN',
+  KITCHEN_MANAGER: 'KITCHEN_MANAGER',
+  STAFF: 'STAFF',
+};
+
+const ROLE_PERMISSIONS = {
+  ADMIN: Object.values(PERMISSIONS),
+  TEACHER: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.STUDENTS_VIEW,
+    PERMISSIONS.COURSES_VIEW,
+    PERMISSIONS.ATTENDANCE_VIEW,
+    PERMISSIONS.ATTENDANCE_MARK,
+    PERMISSIONS.ATTENDANCE_EDIT,
+    PERMISSIONS.EXAMS_VIEW,
+  ],
+  ACCOUNTANT: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.FEES_VIEW,
+    PERMISSIONS.FEES_MANAGE,
+    PERMISSIONS.ACCOUNTS_VIEW,
+    PERMISSIONS.ACCOUNTS_MANAGE,
+    PERMISSIONS.SALARY_VIEW,
+  ],
+  LIBRARIAN: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.LIBRARY_VIEW,
+    PERMISSIONS.LIBRARY_MANAGE,
+  ],
+  HOSTEL_WARDEN: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.HOSTEL_VIEW,
+    PERMISSIONS.HOSTEL_MANAGE,
+    PERMISSIONS.STUDENTS_VIEW,
+  ],
+  KITCHEN_MANAGER: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.KITCHEN_VIEW,
+    PERMISSIONS.KITCHEN_MANAGE,
+  ],
+  STAFF: [
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.STUDENTS_VIEW,
+  ],
+};
+
+/**
+ * Check if a role has a specific permission
+ */
+function roleHasPermission(role, permissionCode) {
+  const perms = ROLE_PERMISSIONS[role];
+  if (!perms) return false;
+  return perms.includes(permissionCode);
+}
+
+module.exports = {
+  PERMISSIONS,
+  DEV_ROLES,
+  ROLE_PERMISSIONS,
+  roleHasPermission,
+};

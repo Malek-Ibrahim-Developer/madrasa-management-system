@@ -9,11 +9,18 @@ const router = express.Router();
 const attendanceService = require('../services/attendanceService');
 const { optionalAuth } = require('../middleware/authMiddleware');
 
+const requirePermission = require('../middleware/requirePermission');
+const { requireInstitutionContext } = require('../middleware/institutionContext');
+const requireModuleEnabled = require('../middleware/requireModuleEnabled');
+
+router.use(requireInstitutionContext);
+router.use(requireModuleEnabled('attendanceEnabled'));
+
 /**
  * 1. GET /api/attendance
  * Fetch daily attendance records for a specific class and date.
  */
-router.get('/', async (req, res, next) => {
+router.get('/', requirePermission('attendance.view'), async (req, res, next) => {
   try {
     const { classId, date } = req.query;
 
@@ -35,7 +42,7 @@ router.get('/', async (req, res, next) => {
  * 2. POST /api/attendance/mark
  * Bulk mark/update/clear attendance for a class on a business date.
  */
-router.post('/mark', optionalAuth, async (req, res, next) => {
+router.post('/mark', requirePermission('attendance.mark'), async (req, res, next) => {
   try {
     const { classId, date, records } = req.body;
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
@@ -60,7 +67,7 @@ router.post('/mark', optionalAuth, async (req, res, next) => {
  * 3. GET /api/attendance/stats
  * Get monthly attendance statistics for a class with date-aware denominators.
  */
-router.get('/stats', async (req, res, next) => {
+router.get('/stats', requirePermission('attendance.view'), async (req, res, next) => {
   try {
     const { classId, month, year } = req.query;
 
@@ -83,7 +90,7 @@ router.get('/stats', async (req, res, next) => {
  * 4. GET /api/attendance/student/:studentId
  * Get attendance history for a specific student.
  */
-router.get('/student/:studentId', async (req, res, next) => {
+router.get('/student/:studentId', requirePermission('attendance.view'), async (req, res, next) => {
   try {
     const { studentId } = req.params;
     let { month, year } = req.query;
@@ -145,7 +152,7 @@ router.get('/student/:studentId', async (req, res, next) => {
  * 5. GET /api/attendance/report
  * Detailed attendance report for a class over a date range.
  */
-router.get('/report', async (req, res, next) => {
+router.get('/report', requirePermission('attendance.view'), async (req, res, next) => {
   try {
     const { classId, dateFrom, dateTo } = req.query;
 
