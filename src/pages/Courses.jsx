@@ -38,13 +38,16 @@ const Courses = () => {
   
   // Pagination state
   const [page, setPage] = useState(1);
-  const [limit] = useState(10);
+  const [limit, setLimit] = useState(10);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
     total: 0,
     totalPages: 1,
   });
+
+  const startRange = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const endRange = Math.min(pagination.page * pagination.limit, pagination.total);
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -95,6 +98,9 @@ const Courses = () => {
 
       if (response?.pagination) {
         setPagination(response.pagination);
+        if (response.pagination.totalPages > 0 && page > response.pagination.totalPages) {
+          setPage(response.pagination.totalPages);
+        }
       }
     } catch (error) {
       console.error('Error fetching classes:', error);
@@ -500,26 +506,83 @@ const Courses = () => {
             </div>
 
             {/* Pagination Controls */}
-            {pagination.totalPages > 1 && (
+            {pagination.total > 0 && (
               <div className="pagination-bar">
-                <span className="pagination-info">
-                  Showing Page <strong>{pagination.page}</strong> of <strong>{pagination.totalPages}</strong> ({pagination.total} total classes)
-                </span>
-                <div className="pagination-actions">
-                  <button 
-                    className="btn-pagination" 
-                    disabled={page <= 1}
-                    onClick={() => setPage(prev => Math.max(prev - 1, 1))}
-                  >
-                    <MdChevronLeft /> Previous
-                  </button>
-                  <button 
-                    className="btn-pagination" 
-                    disabled={page >= pagination.totalPages}
-                    onClick={() => setPage(prev => Math.min(prev + 1, pagination.totalPages))}
-                  >
-                    Next <MdChevronRight />
-                  </button>
+                <div className="pagination-info">
+                  Showing <strong>{startRange}–{endRange}</strong> of <strong>{pagination.total}</strong> classes
+                </div>
+
+                <div className="pagination-controls">
+                  <div className="page-size-selector">
+                    <span className="page-size-label">Rows per page:</span>
+                    <select
+                      className="page-size-select"
+                      value={limit}
+                      onChange={(e) => {
+                        setLimit(Number(e.target.value));
+                        setPage(1);
+                      }}
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </div>
+
+                  <div className="pagination-buttons">
+                    <button
+                      className="page-nav-btn"
+                      disabled={page === 1}
+                      onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
+                      title="Previous Page"
+                    >
+                      <MdChevronLeft />
+                      <span className="nav-text-mobile">Prev</span>
+                    </button>
+
+                    <div className="page-numbers-desktop">
+                      {Array.from({ length: pagination.totalPages }, (_, index) => index + 1)
+                        .filter(
+                          (pageNumber) =>
+                            pageNumber === 1 ||
+                            pageNumber === pagination.totalPages ||
+                            Math.abs(pageNumber - page) <= 1
+                        )
+                        .reduce((items, pageNumber, index, visiblePages) => {
+                          if (index > 0 && pageNumber - visiblePages[index - 1] > 1) {
+                            items.push('...');
+                          }
+                          items.push(pageNumber);
+                          return items;
+                        }, [])
+                        .map((item, index) =>
+                          item === '...' ? (
+                            <span key={`ellipsis-${index}`} className="pagination-ellipsis">
+                              ...
+                            </span>
+                          ) : (
+                            <button
+                              key={item}
+                              className={`page-num-btn ${item === page ? 'active' : ''}`}
+                              onClick={() => setPage(item)}
+                            >
+                              {item}
+                            </button>
+                          )
+                        )}
+                    </div>
+
+                    <button
+                      className="page-nav-btn"
+                      disabled={page === pagination.totalPages || pagination.totalPages === 0}
+                      onClick={() => setPage((currentPage) => Math.min(currentPage + 1, pagination.totalPages))}
+                      title="Next Page"
+                    >
+                      <span className="nav-text-mobile">Next</span>
+                      <MdChevronRight />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
