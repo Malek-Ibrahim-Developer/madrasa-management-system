@@ -18,10 +18,8 @@ import '../styles/students.css';
 const DEFAULT_FORM = {
   admissionNo: '', firstName: '', lastName: '', fatherName: '', motherName: '',
   email: '', phone: '', dateOfBirth: '', gender: 'MALE', address: '',
-  classId: '', status: 'ACTIVE',
+  classId: '', status: 'ACTIVE', admissionDate: '',
   guardianName: '', guardianPhone: '', guardianEmail: '', guardianRelation: '',
-  bloodGroup: '', nationality: 'Indian', idNumber: '', previousSchool: '',
-  emergencyContact: '', medicalNotes: '',
 };
 
 function Students() {
@@ -281,16 +279,11 @@ function Students() {
       address: student.address || '',
       classId: student.classId || '',
       status: student.status || 'ACTIVE',
+      admissionDate: student.admissionDate ? student.admissionDate.split('T')[0] : '',
       guardianName: student.guardianName || '',
       guardianPhone: student.guardianPhone || '',
       guardianEmail: student.guardianEmail || '',
       guardianRelation: student.guardianRelation || '',
-      bloodGroup: student.bloodGroup || '',
-      nationality: student.nationality || 'Indian',
-      idNumber: student.idNumber || '',
-      previousSchool: student.previousSchool || '',
-      emergencyContact: student.emergencyContact || '',
-      medicalNotes: student.medicalNotes || '',
     });
 
     const cfValues = {};
@@ -312,7 +305,16 @@ function Students() {
 
     setSubmitting(true);
     try {
-      const payload = { ...form, customFields: customFieldValues };
+      const classIdPayload = modalMode === 'edit'
+        ? (form.classId === (editingStudent?.classId || '') ? undefined : (form.classId === '' ? null : form.classId))
+        : (form.classId === '' ? null : form.classId);
+
+      const payload = {
+        ...form,
+        classId: classIdPayload,
+        customFields: customFieldValues,
+      };
+
       if (modalMode === 'add') {
         await createStudent(payload);
         toast.success('Student added successfully! 🎉');
@@ -322,8 +324,9 @@ function Students() {
       }
       setShowModal(false);
       resetForm();
-      fetchStudents();
+      await fetchStudents();
     } catch (err) {
+      console.error('Student save failed:', err);
       toast.error(err.message || 'Operation failed');
     } finally {
       setSubmitting(false);
@@ -975,12 +978,6 @@ function Students() {
               >
                 Guardian
               </button>
-              <button
-                className={`tab-btn ${modalTab === 'additional' ? 'active' : ''}`}
-                onClick={() => setModalTab('additional')}
-              >
-                Additional
-              </button>
               {customFields.length > 0 && (
                 <button
                   className={`tab-btn ${modalTab === 'custom' ? 'active' : ''}`}
@@ -1090,41 +1087,6 @@ function Students() {
                     <div className="form-group">
                       <label>Guardian Email</label>
                       <input type="email" name="guardianEmail" value={form.guardianEmail} onChange={handleFormChange} placeholder="guardian@email.com" />
-                    </div>
-                    <div className="form-group full-width">
-                      <label>Emergency Contact</label>
-                      <input name="emergencyContact" value={form.emergencyContact} onChange={handleFormChange} placeholder="Emergency contact number" />
-                    </div>
-                  </div>
-                )}
-
-                {/* Additional Tab */}
-                {modalTab === 'additional' && (
-                  <div className="form-grid">
-                    <div className="form-group">
-                      <label>Blood Group</label>
-                      <select name="bloodGroup" value={form.bloodGroup} onChange={handleFormChange}>
-                        <option value="">Select</option>
-                        {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map(bg => (
-                          <option key={bg} value={bg}>{bg}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label>Nationality</label>
-                      <input name="nationality" value={form.nationality} onChange={handleFormChange} placeholder="Indian" />
-                    </div>
-                    <div className="form-group">
-                      <label>ID Number (Aadhaar/etc)</label>
-                      <input name="idNumber" value={form.idNumber} onChange={handleFormChange} placeholder="XXXX-XXXX-XXXX" />
-                    </div>
-                    <div className="form-group">
-                      <label>Previous School</label>
-                      <input name="previousSchool" value={form.previousSchool} onChange={handleFormChange} placeholder="Previous institution" />
-                    </div>
-                    <div className="form-group full-width">
-                      <label>Medical Notes</label>
-                      <textarea name="medicalNotes" value={form.medicalNotes} onChange={handleFormChange} placeholder="Any medical conditions, allergies, etc." />
                     </div>
                   </div>
                 )}

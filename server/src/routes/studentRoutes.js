@@ -417,6 +417,10 @@ router.get('/:id', requirePermission('students.view'), async (req, res, next) =>
  */
 router.post('/', requirePermission('students.create'), async (req, res, next) => {
   try {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      throw new AppError('Request body must be a valid JSON object', 400, 'INVALID_REQUEST_BODY');
+    }
+
     const {
       admissionNo, firstName, lastName, fatherName, motherName,
       email, phone, dateOfBirth, gender, address,
@@ -498,13 +502,13 @@ router.post('/', requirePermission('students.create'), async (req, res, next) =>
         });
       }
 
+      // Save custom field values atomically inside transaction
+      if (customFields && typeof customFields === 'object') {
+        await saveCustomFieldValues(tx, req.institutionId, createdStudent.id, customFields);
+      }
+
       return createdStudent;
     });
-
-    // Save custom field values if provided
-    if (customFields && typeof customFields === 'object') {
-      await saveCustomFieldValues(req.prisma, req.institutionId, newStudent.id, customFields);
-    }
 
     const full = await getDeterministicStudent(req.prisma, newStudent.id, req.institutionId);
     res.status(201).json({ success: true, data: full });
@@ -522,6 +526,10 @@ router.post('/', requirePermission('students.create'), async (req, res, next) =>
  */
 router.put('/:id', requirePermission('students.edit'), async (req, res, next) => {
   try {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      throw new AppError('Request body must be a valid JSON object', 400, 'INVALID_REQUEST_BODY');
+    }
+
     const {
       admissionNo, firstName, lastName, fatherName, motherName,
       email, phone, dateOfBirth, gender, address,
@@ -691,11 +699,12 @@ router.put('/:id', requirePermission('students.edit'), async (req, res, next) =>
           ...(medicalNotes !== undefined && { medicalNotes: medicalNotes ? medicalNotes.trim() : null }),
         },
       });
-    });
 
-    if (customFields && typeof customFields === 'object') {
-      await saveCustomFieldValues(req.prisma, req.institutionId, req.params.id, customFields);
-    }
+      // Save custom field values atomically inside the same transaction
+      if (customFields && typeof customFields === 'object') {
+        await saveCustomFieldValues(tx, req.institutionId, req.params.id, customFields);
+      }
+    });
 
     const updatedStudent = await getDeterministicStudent(req.prisma, req.params.id, req.institutionId);
     res.json({ success: true, data: updatedStudent });
@@ -771,50 +780,105 @@ router.delete('/:id', requirePermission('students.delete'), async (req, res, nex
 });
 
 /**
- * Helper: Save custom field values for a student scoped to institution
+ * Helper: Save custom field values for a student scoped to institution inside a transaction
  */
-async function saveCustomFieldValues(prisma, institutionId, studentId, customFields) {
-  const fieldDefs = await prisma.customField.findMany({
+async function saveCustomFieldValues(tx, institutionId, studentId, customFields) {
+  const fieldDefs = await tx.customField.findMany({
     where: { institutionId, isActive: true },
   });
 
-  const keyToId = {};
+  const keyToDef = new Map();
   for (const f of fieldDefs) {
-    keyToId[f.fieldKey] = f.id;
+    keyToDef.set(f.fieldKey, f);
+    keyToDef.set(f.id, f);
   }
 
-  const ops = [];
-  for (const [key, value] of Object.entries(customFields)) {
-    const fieldId = keyToId[key];
-    if (!fieldId) continue;
-
-    if (value === '' || value === null || value === undefined) {
-      ops.push(
-        prisma.customFieldValue.deleteMany({
-          where: { customFieldId: fieldId, studentId },
-        })
-      );
-    } else {
-      ops.push(
-        prisma.customFieldValue.upsert({
-          where: {
-            customFieldId_studentId: { customFieldId: fieldId, studentId },
-          },
-          create: {
-            customFieldId: fieldId,
-            studentId,
-            value: String(value),
-          },
-          update: {
-            value: String(value),
-          },
-        })
-      );
+  // 1. Enforce isRequired validation
+  for (const field of fieldDefs) {
+    if (field.isRequired) {
+      const val = customFields[field.fieldKey] !== undefined ? customFields[field.fieldKey] : customFields[field.id];
+      if (val === undefined || val === null || (typeof val === 'string' && val.trim() === '')) {
+        throw new AppError(`${field.name} is required`, 400, 'CUSTOM_FIELD_REQUIRED');
+      }
     }
   }
 
+  // 2. Validate and prepare operations for submitted values
+  const ops = [];
+  const processedFieldIds = new Set();
+  for (const [key, rawValue] of Object.entries(customFields)) {
+    const def = keyToDef.get(key);
+    // Unknown field keys for this institution must not be written
+    if (!def || processedFieldIds.has(def.id)) continue;
+    processedFieldIds.add(def.id);
+
+    if (rawValue === '' || rawValue === null || rawValue === undefined) {
+      ops.push(
+        tx.customFieldValue.deleteMany({
+          where: { customFieldId: def.id, studentId },
+        })
+      );
+      continue;
+    }
+
+    const valueStr = String(rawValue).trim();
+
+    // Type validation
+    if (def.fieldType === 'SELECT') {
+      let optionsList = [];
+      if (def.options) {
+        try {
+          const parsed = JSON.parse(def.options);
+          if (Array.isArray(parsed)) {
+            optionsList = parsed.map((o) => (typeof o === 'object' && o.value ? String(o.value) : String(o)));
+          } else {
+            optionsList = def.options.split(',').map((s) => s.trim());
+          }
+        } catch {
+          optionsList = def.options.split(',').map((s) => s.trim());
+        }
+      }
+      if (optionsList.length > 0 && !optionsList.includes(valueStr)) {
+        throw new AppError(
+          `Invalid value "${valueStr}" for ${def.name}. Must be one of: ${optionsList.join(', ')}`,
+          400,
+          'INVALID_CUSTOM_FIELD_VALUE'
+        );
+      }
+    } else if (def.fieldType === 'NUMBER') {
+      if (isNaN(Number(valueStr))) {
+        throw new AppError(`${def.name} must be a valid number`, 400, 'INVALID_CUSTOM_FIELD_VALUE');
+      }
+    } else if (def.fieldType === 'DATE') {
+      if (isNaN(new Date(valueStr).getTime())) {
+        throw new AppError(`${def.name} must be a valid date`, 400, 'INVALID_CUSTOM_FIELD_VALUE');
+      }
+    } else if (def.fieldType === 'CHECKBOX') {
+      const lower = valueStr.toLowerCase();
+      if (!['true', 'false', '1', '0', 'yes', 'no'].includes(lower)) {
+        throw new AppError(`${def.name} must be a valid boolean`, 400, 'INVALID_CUSTOM_FIELD_VALUE');
+      }
+    }
+
+    ops.push(
+      tx.customFieldValue.upsert({
+        where: {
+          customFieldId_studentId: { customFieldId: def.id, studentId },
+        },
+        create: {
+          customFieldId: def.id,
+          studentId,
+          value: valueStr,
+        },
+        update: {
+          value: valueStr,
+        },
+      })
+    );
+  }
+
   if (ops.length > 0) {
-    await prisma.$transaction(ops);
+    await Promise.all(ops);
   }
 }
 
